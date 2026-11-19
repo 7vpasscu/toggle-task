@@ -1,0 +1,11 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),C=require('./core.js');
+const now=1800000000000,draft={projectId:'demo-p1',description:'Trabajo',workType:'Visuales',units:1};
+test('daily view splits midnight sessions without duplicating time',()=>{const s={start:1000,end:5000};assert.equal(C.dayOverlap(s,0,3000),2000);assert.equal(C.dayOverlap(s,3000,6000),2000);assert.equal(C.dayOverlap(s,6000,9000),0);});
+test('start/stop preserves project and stable session id across reload',()=>{let s=C.seed(now);C.start(s,draft,now);const id=s.active.id;s=JSON.parse(JSON.stringify(s));C.stop(s,now+75000);assert.equal(s.sessions[0].id,id);assert.equal(C.seconds(s.sessions[0]),75);assert.equal(s.sessions[0].projectId,'demo-p1');assert.equal(C.stop(s,now+80000),null);assert.equal(s.sessions.length,2);});
+test('duplicate start rejected',()=>{const s=C.seed(now);C.start(s,draft,now);assert.throws(()=>C.start(s,draft,now+1));});
+test('archived project rejected',()=>{const s=C.seed(now);s.projects[0].archived=true;assert.throws(()=>C.start(s,draft,now));});
+test('manual edits update instead of duplicating',()=>{const s=C.seed(now),entry={...s.sessions[0],description:'Updated'};C.upsert(s,entry,now);assert.equal(s.sessions.length,1);assert.equal(s.sessions[0].description,'Updated');});
+test('invalid dates, units and overlaps rejected',()=>{const s=C.seed(now),entry={...s.sessions[0]};assert.throws(()=>C.validate({...entry,end:entry.start},s,now));assert.throws(()=>C.validate({...entry,end:now+90000},s,now));assert.throws(()=>C.validate({...entry,units:-1},s,now));assert.throws(()=>C.validate({...entry,id:'new'},s,now));});
+test('overlap permitted across independent workers',()=>{const s=C.seed(now);s.users.push({id:'second',name:'Second'});assert.doesNotThrow(()=>C.validate({...s.sessions[0],id:'new',userId:'second'},s,now));});
+test('active timer prevents overlapping manual entry',()=>{const s=C.seed(now);C.start(s,draft,now-10000);assert.throws(()=>C.upsert(s,{...s.active,id:'manual',end:now},now));});
+test('durations over 24h and CSV injection handled',()=>{assert.equal(C.format(90061),'25:01:01');assert.match(C.csv([['=SUM(A1)', 'a"b']]),/\x27=SUM/);assert.ok(C.csv([['a"b']]).includes('a""b'));});

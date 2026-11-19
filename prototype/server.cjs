@@ -1,0 +1,3 @@
+const http=require('node:http'),fs=require('node:fs'),path=require('node:path');
+const files=new Set(['index.html','style.css','core.js','app.js']);
+http.createServer((req,res)=>{const file=new URL(req.url,'http://localhost').pathname.slice(1)||'index.html';if(!files.has(file)){res.writeHead(404);res.end();return;}res.setHeader('Content-Type',file.endsWith('.css')?'text/css':file.endsWith('.js')?'text/javascript':'text/html; charset=utf-8');res.setHeader('Cache-Control','no-store');fs.createReadStream(path.join(__dirname,file)).pipe(res);}).listen(4173,'127.0.0.1',()=>console.log('Toggle Task: http://127.0.0.1:4173'));

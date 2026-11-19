@@ -29,8 +29,10 @@ final class TimerStore: ObservableObject {
         isRunning = true; startedAt = .now; elapsedSeconds = 0
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            guard let self, let start = self.startedAt else { return }
-            self.elapsedSeconds = max(0, Int(Date.now.timeIntervalSince(start)))
+            Task { @MainActor in
+                guard let self, let start = self.startedAt else { return }
+                self.elapsedSeconds = max(0, Int(Date.now.timeIntervalSince(start)))
+            }
         }
     }
 
@@ -43,6 +45,6 @@ final class TimerStore: ObservableObject {
         isRunning = false; startedAt = nil; elapsedSeconds = 0; syncState = "Pendiente de sincronizar"
     }
 
-    func sync() async { syncState = "Sincronizado (simulado)" }
-    static func format(seconds: Int) -> String { String(format: "%02d:%02d:%02d", seconds / 3600, (seconds % 3600) / 60, seconds % 60) }
+    func sync() async { syncState = "Notion sin conectar · sesiones locales" }
+    nonisolated static func format(seconds: Int) -> String { String(format: "%02d:%02d:%02d", seconds / 3600, (seconds % 3600) / 60, seconds % 60) }
 }

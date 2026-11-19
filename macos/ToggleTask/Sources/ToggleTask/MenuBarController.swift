@@ -1,11 +1,13 @@
 import AppKit
 import SwiftUI
 
-final class MenuBarController {
+@MainActor
+final class MenuBarController: NSObject {
     private var item: NSStatusItem?
     private var popover: NSPopover?
 
     @MainActor func install(store: TimerStore) {
+        guard item == nil else { return }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.image = NSImage(systemSymbolName: "stopwatch", accessibilityDescription: "Toggle Task")
         item.button?.action = #selector(togglePopover(_:)); item.button?.target = self

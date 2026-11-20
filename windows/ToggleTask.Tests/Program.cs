@@ -13,4 +13,6 @@ ledger.Sample("bob",null,null,now.AddSeconds(502),false);
 Check(ledger.Suggestions("alice").Single().Seconds==20,"Observed interval only");
 Check(!ledger.Suggestions("bob").Any(),"Do not bridge sleep gaps or worker boundaries");
 Check(ledger.Pending==null,"Inactive stops sampling");
-Console.WriteLine("6 assertions passed: ownership, idle/sleep gaps, worker isolation.");
+Check(EntryDuration.Minutes("26")==26 && EntryDuration.Minutes("126")==86 && EntryDuration.Minutes("1:26")==86,"Compact duration");
+Check(EntryDuration.Minutes("160")==null && EntryDuration.Minutes("0")==null,"Invalid duration");
+Console.WriteLine("All checks passed.");

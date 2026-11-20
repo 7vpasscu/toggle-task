@@ -14,3 +14,9 @@ Production gates still required: real Notion authorization, durable server idemp
 Browser localStorage is a preview store, not a multi-user database. Profiles are labels with stable IDs, not security boundaries. Revision checks and storage notifications detect common multi-tab conflicts but are not transactional cross-device locking. Use one editing tab.
 
 Notion: retain Recorded By independently from Created By. Never write rollups/formulas. Use a stable session UUID, UTC timestamps and explicit worker ID. Query-before-create alone cannot guarantee uniqueness under concurrency; a sync service with a unique session key is required. No app tokens are present in the browser or repository.
+
+### Work type catalog in the browser preview
+
+Project and Type support substring search. Use the arrow keys and Enter to select a match. Switch fields with Tab. To add a type, enter its full name and choose **Create type**. Units accepts a whole number from 0 to 100000.
+
+Without integration credentials the preview uses the three types from the personal sample's `Type of Work` property and saves additions in this browser. To enable live catalog reads and additions, provide `TASK_TRACK_NOTION_SOURCE` (the personal replica's data source ID) and `TASK_TRACK_NOTION_TOKEN` to the local server process and restart `node prototype/server.cjs`. Share only the personal test database with that integration. The source check restricts the endpoint to that replica. Settings shows the catalog connection state. Session records continue to use local storage.

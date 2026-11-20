@@ -8,16 +8,15 @@ struct ToggleTaskApp: App {
     @State private var menuBar = MenuBarController()
     var body: some Scene {
         WindowGroup("Task Track") {
-            ContentView().environmentObject(store).environmentObject(activity).task { menuBar.install(store: store) }
+            ContentView().environment(\.locale, Locale(identifier: "en_GB")).environmentObject(store).environmentObject(activity).task { menuBar.install(store: store) }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in activity.flush() }
         }.defaultSize(width: 420, height: 760).commands {
             CommandGroup(after: .appInfo) {
-                Button(store.manualMode ? "Modo temporizador" : "Modo manual") { store.manualMode.toggle() }
+                Button(store.manualMode ? "Timer mode" : "Manual mode") { store.manualMode.toggle() }
                     .keyboardShortcut("d", modifiers: .command)
-                Button("Iniciar / parar temporizador") { store.toggleTimer() }
+                Button("Start or stop timer") { store.toggleTimer() }
                     .keyboardShortcut("t", modifiers: [.command, .shift])
             }
         }
     }
 }
-

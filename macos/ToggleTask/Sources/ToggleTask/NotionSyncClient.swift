@@ -6,7 +6,7 @@ protocol TimeTrackingSyncClient {
 }
 
 enum SyncError: LocalizedError { case notConfigured
-    var errorDescription: String? { "La autenticación de Notion aún no está configurada." }
+    var errorDescription: String? { "Connect your Notion account to sync." }
 }
 
 struct NotionSyncClient: TimeTrackingSyncClient {

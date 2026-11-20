@@ -3,7 +3,11 @@ import XCTest
 
 final class ToggleTaskTests: XCTestCase {
     func testFormatsElapsedTime() {
-        XCTAssertEqual(TimerStore.format(seconds: 3723), "01:02:03")
+        XCTAssertEqual(TimerStore.format(seconds: 3723), "01:02")
+        for (input, minutes) in [("26",26), ("126",86), ("0126",86), ("1:26",86), ("1000",600)] {
+            XCTAssertEqual(EntryDuration.minutes(input), minutes)
+        }
+        for input in ["0","160","1:60","-5","1:2:3"] { XCTAssertNil(EntryDuration.minutes(input)) }
     }
 
     func testStableSessionIDIsDedupeKey() {

@@ -9,7 +9,7 @@ final class MenuBarController: NSObject {
     @MainActor func install(store: TimerStore) {
         guard item == nil else { return }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.image = NSImage(systemSymbolName: "stopwatch", accessibilityDescription: "Toggle Task")
+        item.button?.image = NSImage(systemSymbolName: "stopwatch", accessibilityDescription: "Task Track")
         item.button?.action = #selector(togglePopover(_:)); item.button?.target = self
         let popover = NSPopover(); popover.behavior = .transient; popover.contentSize = NSSize(width: 340, height: 280)
         popover.contentViewController = NSHostingController(rootView: MenuBarView().environmentObject(store))

@@ -36,18 +36,18 @@ jobs:
 
       - name: Assemble app bundle
         run: |
-          APP="$RUNNER_TEMP/ToggleTask.app"
+          APP="$RUNNER_TEMP/Task Track.app"
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
           cp .build/release/ToggleTask "$APP/Contents/MacOS/ToggleTask"
           cp Resources/Info.plist "$APP/Contents/Info.plist"
           chmod +x "$APP/Contents/MacOS/ToggleTask"
-          ditto -c -k --sequesterRsrc --keepParent "$APP" "$RUNNER_TEMP/ToggleTask-macos.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$RUNNER_TEMP/TaskTrack-macos.zip"
 
       - name: Upload app artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ToggleTask-macos
-          path: ${{ runner.temp }}/ToggleTask-macos.zip
+          name: TaskTrack-macos
+          path: ${{ runner.temp }}/TaskTrack-macos.zip
 
   prototype:
     runs-on: ubuntu-latest
@@ -55,3 +55,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate browser prototype
         run: node --test prototype/core.test.cjs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci --prefix prototype
+      - run: npx playwright install --with-deps chromium
+        working-directory: prototype
+      - run: npx playwright test --config playwright.config.cjs
+        working-directory: prototype

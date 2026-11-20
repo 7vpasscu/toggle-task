@@ -1,4 +1,4 @@
-# Toggle Task — macOS MVP
+# Task Track — macOS MVP
 
 Base nativa SwiftUI + AppKit para seguimiento de tiempo.
 
@@ -7,7 +7,10 @@ Base nativa SwiftUI + AppKit para seguimiento de tiempo.
 - Timer iniciar/parar con descripción y selector de proyecto.
 - Historial de sesiones y datos simulados.
 - Status item de la barra de menús con popover.
-- Deduplicación local por proyecto, inicio y usuario.
+- Identificador estable de sesión y propietario independiente de Created By.
+- Lista y calendario personales, modo manual con ⌘D y editor de sesiones.
+- Registro opcional de aplicaciones en primer plano y revisión de sugerencias.
+- Persistencia local del temporizador y las sesiones.
 - Adaptador `TimeTrackingSyncClient` preparado para Notion.
 
 ## Ejecutar en macOS

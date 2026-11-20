@@ -1,9 +1,61 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Security.Principal;
+using System.Text.Json;
 namespace ToggleTask;
 public sealed class TimerStore : INotifyPropertyChanged, IDisposable {
-  readonly System.Windows.Threading.DispatcherTimer timer = new(){Interval=TimeSpan.FromSeconds(1)}; DateTime? startedAt; bool running; int elapsed; string selected="job-001"; string description="";
-  public IReadOnlyList<Project> Projects {get;}=MockData.Projects; public ObservableCollection<TimeSession> Sessions {get;}=[new("demo-1","job-001",MockData.Projects[0].Name,"Dirección de arte y revisión de visuales",DateTime.Now.AddHours(-1.5),DateTime.Now.AddHours(-1),1800,"Javier","mock")];
-  public event PropertyChangedEventHandler? PropertyChanged; public bool IsRunning {get=>running;private set{running=value;Changed();Changed(nameof(TimerButtonText));}} public int ElapsedSeconds {get=>elapsed;private set{elapsed=value;Changed();Changed(nameof(FormattedElapsed));}} public string FormattedElapsed=>TimeSpan.FromSeconds(ElapsedSeconds).ToString(@"hh\:mm\:ss"); public string TimerButtonText=>IsRunning?"Parar":"Iniciar"; public string SelectedProjectId {get=>selected;set{selected=value;Changed();}} public string ActivityDescription {get=>description;set{description=value;Changed();}} public string SyncState {get;private set;}="Datos simulados"; public Project? SelectedProject=>Projects.FirstOrDefault(p=>p.Id==SelectedProjectId);
-  public TimerStore(){timer.Tick+=(_,_)=>{if(startedAt is{} s)ElapsedSeconds=Math.Max(0,(int)(DateTime.Now-s).TotalSeconds);};} public void ToggleTimer(){if(IsRunning)StopTimer();else StartTimer();} public void StartTimer(){if(IsRunning)return;startedAt=DateTime.Now;ElapsedSeconds=0;IsRunning=true;timer.Start();} public void StopTimer(){if(!IsRunning||startedAt is not{} s||SelectedProject is not{} p)return;timer.Stop();var e=DateTime.Now;var x=new TimeSession(Guid.NewGuid().ToString(),p.Id,p.Name,ActivityDescription.Trim(),s,e,Math.Max(1,(int)(e-s).TotalSeconds),"Javier","mock");if(!Sessions.Any(a=>a.DedupeKey==x.DedupeKey))Sessions.Insert(0,x);startedAt=null;IsRunning=false;ElapsedSeconds=0;SyncState="Pendiente de sincronizar";Changed(nameof(SyncState));} public void Dispose()=>timer.Stop(); void Changed([CallerMemberName]string? n=null)=>PropertyChanged?.Invoke(this,new(n)); }
+ readonly System.Windows.Threading.DispatcherTimer timer=new(){Interval=TimeSpan.FromSeconds(1)};
+ readonly List<TimeSession> all=[];
+ readonly string file=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"TaskTrack","sessions.json");
+ TimeSession? active; string selected="job-001",description="",status="Perfil local · Notion sin conectar";int elapsed;bool manual;DateTime day=DateTime.Today;
+ string startText=DateTime.Now.AddMinutes(-30).ToString("yyyy-MM-dd HH:mm:ss"),endText=DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");string? editingId;
+ public string WorkerId {get;}="local:"+WindowsIdentity.GetCurrent().User!.Value;
+ public AppActivityMonitor Activity {get;}
+ public IReadOnlyList<Project> Projects {get;}=MockData.Projects;
+ public ObservableCollection<TimeSession> Sessions {get;}=[];
+ public ObservableCollection<TimeSession> DaySessions {get;}=[];
+ public sealed record CalendarBlock(TimeSession Session,double Top,double Height);
+ public ObservableCollection<CalendarBlock> DayBlocks {get;}=[];
+ public string[] Hours {get;}=Enumerable.Range(0,24).Select(h=>$"{h:00}:00").ToArray();
+ public event PropertyChangedEventHandler? PropertyChanged;
+ public bool IsRunning=>active!=null;
+ public int ElapsedSeconds {get=>elapsed;private set{elapsed=value;Changed();Changed(nameof(FormattedElapsed));}}
+ public static string Format(int seconds)=>$"{seconds/3600:00}:{seconds/60%60:00}:{seconds%60:00}";
+ public string FormattedElapsed=>Format(elapsed);
+ public string TimerButtonText=>ManualMode?"Guardar":IsRunning?"■":"▶";
+ public string SelectedProjectId {get=>selected;set{selected=value;Changed();}}
+ public string ActivityDescription {get=>description;set{description=value;Changed();}}
+ public string SyncState {get=>status;private set{status=value;Changed();}}
+ public bool ManualMode {get=>manual;set{manual=value;Changed();Changed(nameof(TimerButtonText));if(!value)editingId=null;}}
+ public string ManualStart {get=>startText;set{startText=value;Changed();}}
+ public string ManualEnd {get=>endText;set{endText=value;Changed();}}
+ public DateTime SelectedDay {get=>day;set{day=value.Date;Changed();Refresh();}}
+ public string DayTotal=>Format((int)DaySessions.Sum(s=>SessionPolicy.Overlap(s,day,day.AddDays(1))));
+ public Project? SelectedProject=>Projects.FirstOrDefault(p=>p.Id==SelectedProjectId);
+ public sealed record Snapshot(List<TimeSession> Sessions,TimeSession? Active);
+ public TimerStore(){
+  Activity=new(WorkerId);
+  try{if(File.Exists(file)){var saved=JsonSerializer.Deserialize<Snapshot>(File.ReadAllText(file));if(saved!=null){all.AddRange(saved.Sessions);if(saved.Active?.WorkerId==WorkerId)active=saved.Active;}}}
+  catch(Exception e)when(e is IOException or JsonException or UnauthorizedAccessException){SyncState="No se pudieron cargar los datos: "+e.Message;}
+  Refresh();timer.Tick+=(_,_)=>{if(active is{} s)ElapsedSeconds=Math.Max(0,(int)(DateTime.Now-s.StartedAt).TotalSeconds);};if(active!=null)timer.Start();
+ }
+ void Refresh(){Sessions.Clear();foreach(var s in SessionPolicy.Owned(all,WorkerId).OrderByDescending(x=>x.StartedAt))Sessions.Add(s);DaySessions.Clear();DayBlocks.Clear();foreach(var s in Sessions.Where(s=>SessionPolicy.Overlap(s,day,day.AddDays(1))>0)){DaySessions.Add(s);DayBlocks.Add(new(s,Math.Max(0,(s.StartedAt-day).TotalMinutes),Math.Max(12,SessionPolicy.Overlap(s,day,day.AddDays(1))/60)));}Changed(nameof(DayTotal));}
+ public void Submit(){if(ManualMode)SaveManual();else ToggleTimer();}
+ public void ToggleTimer(){if(IsRunning)StopTimer();else StartTimer();}
+ public void StartTimer(){if(IsRunning||SelectedProject is not{} p)return;active=new(Guid.NewGuid().ToString(),p.Id,p.Name,ActivityDescription.Trim(),DateTime.Now,null,0,Environment.UserName,"timer",WorkerId);ElapsedSeconds=0;timer.Start();Changed(nameof(IsRunning));Changed(nameof(TimerButtonText));Persist();}
+ public void StopTimer(){if(active is not{} s)return;var end=DateTime.Now;if(end<=s.StartedAt)end=s.StartedAt.AddSeconds(1);if(Save(s with{EndedAt=end,DurationSeconds=Math.Max(1,(int)(end-s.StartedAt).TotalSeconds)})){active=null;timer.Stop();ElapsedSeconds=0;Changed(nameof(IsRunning));Changed(nameof(TimerButtonText));Persist();}}
+ public bool Save(TimeSession s){
+  if(s.WorkerId!=WorkerId||all.Any(x=>x.Id==s.Id&&x.WorkerId!=WorkerId)){SyncState="Sesión ajena al perfil.";return false;}
+  if(s.EndedAt is not{} end||end<=s.StartedAt||end>DateTime.Now.AddSeconds(1)){SyncState="Revisa inicio y fin; no se permite tiempo futuro.";return false;}
+  if(Sessions.Any(x=>x.Id!=s.Id&&s.StartedAt<x.EndedAt&&end>x.StartedAt)||(active!=null&&active.Id!=s.Id&&end>active.StartedAt)){SyncState="La sesión se solapa con tiempo registrado.";return false;}
+  all.RemoveAll(x=>x.Id==s.Id);all.Add(s with{DurationSeconds=(int)(end-s.StartedAt).TotalSeconds});Refresh();Persist();return true;
+ }
+ public void SaveManual(){if(SelectedProject is not{} p||!DateTime.TryParseExact(ManualStart,"yyyy-MM-dd HH:mm:ss",CultureInfo.InvariantCulture,DateTimeStyles.None,out var start)||!DateTime.TryParseExact(ManualEnd,"yyyy-MM-dd HH:mm:ss",CultureInfo.InvariantCulture,DateTimeStyles.None,out var end)){SyncState="Usa fechas yyyy-MM-dd HH:mm:ss y selecciona un proyecto.";return;}if(Save(new(editingId??Guid.NewGuid().ToString(),p.Id,p.Name,ActivityDescription,start,end,0,Environment.UserName,"manual",WorkerId)))editingId=null;}
+ public void Review(AppActivity item){if(item.WorkerId!=WorkerId)return;ManualMode=true;editingId="activity-"+item.Id;ActivityDescription=item.AppName;ManualStart=item.Start.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");ManualEnd=item.End.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");}
+ public void Edit(TimeSession s){if(s.WorkerId!=WorkerId)return;ManualMode=true;editingId=s.Id;SelectedProjectId=s.ProjectId;ActivityDescription=s.Description;ManualStart=s.StartedAt.ToString("yyyy-MM-dd HH:mm:ss");ManualEnd=(s.EndedAt??s.StartedAt).ToString("yyyy-MM-dd HH:mm:ss");}
+ void Persist(){try{Directory.CreateDirectory(Path.GetDirectoryName(file)!);var tmp=file+".tmp";File.WriteAllText(tmp,JsonSerializer.Serialize(new Snapshot(all,active)));File.Move(tmp,file,true);SyncState="Guardado local · Notion sin conectar";}catch(Exception e)when(e is IOException or UnauthorizedAccessException){SyncState="No guardado: "+e.Message;}}
+ public void Dispose(){timer.Stop();Persist();Activity.Dispose();}
+ void Changed([CallerMemberName]string? n=null)=>PropertyChanged?.Invoke(this,new(n));
+}

@@ -23,8 +23,21 @@ struct TimeSession: Identifiable, Codable, Hashable {
     var durationSeconds: Int
     var recordedBy: String
     var source: String
+    // Stable application identity, independent of Notion's integration Created By.
+    // Legacy records without an explicit owner remain hidden until mapped.
+    var workerID: String? = nil
 
-    var dedupeKey: String { "\(projectID)|\(startedAt.timeIntervalSince1970)|\(recordedBy)" }
+    var dedupeKey: String { id }
+}
+
+enum SessionPolicy {
+    static func owned(_ sessions: [TimeSession], by workerID: String?) -> [TimeSession] {
+        guard let workerID, !workerID.isEmpty else { return [] }
+        return sessions.filter { $0.workerID == workerID }
+    }
+    static func overlap(_ session: TimeSession, day: DateInterval) -> TimeInterval {
+        max(0, min(session.endedAt ?? session.startedAt, day.end).timeIntervalSince(max(session.startedAt, day.start)))
+    }
 }
 
 enum MockData {

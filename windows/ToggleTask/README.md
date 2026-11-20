@@ -1,4 +1,4 @@
-# Toggle Task — Windows MVP
+# Task Track — Windows MVP
 
 Versión Windows paralela del tracker nativo, construida con WPF sobre .NET 8. Incluye temporizador, selector de proyecto, descripción, historial, datos simulados, deduplicación y bandeja del sistema. La autenticación y sincronización con Notion quedan aisladas para la siguiente iteración.
 

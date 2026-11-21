@@ -61,8 +61,6 @@ final class TimerStore: ObservableObject {
               !allSessions.contains(where: { $0.id == session.id && $0.workerID != workerID }) else { error = "This session belongs to another profile."; return false }
         guard let end = session.endedAt, end > session.startedAt, end <= Date.now.addingTimeInterval(1),
               projects.contains(where: { $0.id == session.projectID }) else { error = "Choose a project and check the times. End the session after it starts and by the current time."; return false }
-        guard !sessions.contains(where: { $0.id != session.id && session.startedAt < ($0.endedAt ?? $0.startedAt) && end > $0.startedAt }),
-              !(active != nil && active?.id != session.id && end > active!.startedAt) else { error = "This session overlaps a saved session or the running timer."; return false }
         var validated = session; validated.durationSeconds = Int(end.timeIntervalSince(session.startedAt))
         allSessions.removeAll { $0.id == session.id }; allSessions.append(validated); error = nil; persist(); return true
     }

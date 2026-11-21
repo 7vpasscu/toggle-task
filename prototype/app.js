@@ -78,14 +78,28 @@ function renderReports() {
   if(period!=='all') start.setDate(start.getDate()-days+1);
   const dateLabel=d=>d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
   $('reportRange').textContent=period==='all'?'All recorded dates':days===1?dateLabel(selected):dateLabel(start)+' – '+dateLabel(selected);
-  const records = period==='all'?C.mine(state):C.daily(state,+start,+end);
+  const mine=C.mine(state);
+  const ids=new Set(mine.map(s=>s.projectId));
+  const available=state.projects.filter(p=>ids.has(p.id));
+  const brandKey=p=>'brand:'+(p.brand || '').trim().toLocaleLowerCase('en');
+  const brands=new Map(available.map(p=>[brandKey(p),p.brand?.trim() || 'Unassigned brand']));
+  const byName=(a,b)=>a.name.localeCompare(b.name,'en');
+  const brandSelect=$('reportBrand'), projectSelect=$('reportProject');
+  options(brandSelect,[{id:'',name:'All brands'},...[...brands].map(([id,name])=>({id,name})).sort(byName)],brandSelect.value);
+  const projects=available.filter(p=>!brandSelect.value || brandKey(p)===brandSelect.value);
+  options(projectSelect,[{id:'',name:'All projects'},...projects.sort(byName)],projectSelect.value);
+  const matching=new Set(projects.map(p=>p.id));
+  const records=mine.filter(s=>
+    (!brandSelect.value || matching.has(s.projectId)) &&
+    (!projectSelect.value || s.projectId===projectSelect.value) &&
+    (period==='all' || C.dayOverlap(s,+start,+end)>0));
   const totals = new Map();
   let total=0;
   for(const s of records){
     const ms = period==='all'?s.end-s.start:C.dayOverlap(s,+start,+end);
     total+=ms;
-    const project = totals.get(s.projectId) || {ms:0,types:new Map(),tasks:new Set()};
-    project.ms+=ms;
+    const project = totals.get(s.projectId) || {ms:0,types:new Map(),tasks:new Set(),sessions:[]};
+    project.ms+=ms; project.sessions.push(s);
     const key=C.logicalID(s);
     if(!project.tasks.has(key)){
       project.types.set(s.workType,(project.types.get(s.workType)||0)+s.units);
@@ -95,10 +109,25 @@ function renderReports() {
   }
   area.append(el('h1',C.format(total/1000)));
   for(const [id,project] of [...totals].sort((a,b)=>b[1].ms-a[1].ms)){
-    const card=el('article',null,'projectcard'),bar=el('div',null,'bar'),fill=el('span');
+    const sessions=project.sessions.sort((a,b)=>b.start-a.start || a.id.localeCompare(b.id));
+    const go=session=>showReportedSession(session,period==='all'?session.start:Math.max(session.start,+start));
+    const card=el('article',null,'projectcard reportCard'), summary=action('',()=>go(sessions[0]));
+    summary.className='reportLink';
+    summary.setAttribute('aria-label','Show '+projectName(id)+' in Calendar');
+    const bar=el('div',null,'bar'),fill=el('span');
     fill.style.width=(project.ms/total*100)+'%'; bar.append(fill);
-    card.append(el('strong',projectName(id)+' · '+C.format(project.ms/1000)),bar,
+    summary.append(el('strong',projectName(id)+' · '+C.format(project.ms/1000)),bar,
       el('p',[...project.types].map(([type,n])=>type+' · '+n+' units').join(' / ')));
+    card.append(summary);
+    if(sessions.length>1) {
+      const choices=el('details');
+      choices.append(el('summary',sessions.length+' sessions'));
+      for(const session of sessions){
+        const date=new Date(session.start).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
+        choices.append(action(date+' · '+clockTime(session.start)+' · '+(session.description||'No description'),()=>go(session)));
+      }
+      card.append(choices);
+    }
     area.append(card);
   }
   if(!total) area.append(el('p','No time logged during this period.','empty'));
@@ -110,7 +139,7 @@ document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLower
 const headings={timer:'Your sessions',day:'Calendar',reports:'Reports',settings:'Settings'};
 function showView(view){const tracking=['timer','day'].includes(view);$('viewSegments').hidden=!tracking;$('backToTracking').hidden=tracking;const b=document.querySelector('.segments [data-view="'+view+'"]') || document.querySelector('[data-view="'+view+'"]');for(const v of Object.keys(headings))$(v+'View').hidden=v!==view;document.querySelectorAll('[data-view]').forEach(x=>{x.classList.toggle('selected',x===b);x.setAttribute('aria-pressed',String(x===b));x.setAttribute('aria-current',x===b?'page':'false');});$('heading').textContent=headings[view];$('trackingHeader').hidden=!['timer','day'].includes(view);$('moreNav').hidden=true;$('moreButton').setAttribute('aria-expanded','false');if(view==='reports'){$('reportPeriod').value='1';renderReports();}if(view==='day')renderDay();}
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>showView(b.dataset.view));$('moreButton').onclick=()=>{$('moreNav').hidden=!$('moreNav').hidden;$('moreButton').setAttribute('aria-expanded',String(!$('moreNav').hidden));};
-$('user').onchange=()=>mutate(n=>{if(n.active)throw Error('Stop the timer before switching profiles.');n.userId=$('user').value;});for(const id of ['search','period'])$(id).addEventListener('input',renderSessions);$('reportPeriod').onchange=renderReports;$('customDays').oninput=renderReports;$('project').onchange=()=>optionList($('descriptionOptions'),descriptionSuggestions(currentProjectID()));
+$('user').onchange=()=>mutate(n=>{if(n.active)throw Error('Stop the timer before switching profiles.');n.userId=$('user').value;});for(const id of ['search','period'])$(id).addEventListener('input',renderSessions);for(const id of ['reportBrand','reportProject','reportPeriod']) $(id).onchange=renderReports;$('customDays').oninput=renderReports;$('project').onchange=()=>optionList($('descriptionOptions'),descriptionSuggestions(currentProjectID()));
 function localDate(time){const d=new Date(time);return new Date(time-d.getTimezoneOffset()*60000).toISOString().slice(0,16);}
 function setupPicker(id, values, create, kind, changed) {
   const input = $(id), list = $(id + 'List'), arrow = input.parentElement.querySelector('button');
@@ -223,9 +252,19 @@ function syncEditorChoices() {
 for(const id of ['workType','editType']) setupPicker(id,workTypes,createType,'type',()=>{});
 for(const id of ['project','editProject']) setupPicker(id,()=>state.projects.filter(p=>!p.archived).map(p=>p.name),createPickerProject,'project',()=>optionList($('descriptionOptions'),descriptionSuggestions(projectForName($(id).value)?.id)));
 $('editor').addEventListener('close',()=>optionList($('descriptionOptions'),descriptionSuggestions(currentProjectID())));
-let editorStart, originalLength, durationChanged;
+let editorStart, originalLength, durationChanged, lockedInterval;
 function openEditor(session, range) {
   if(session) {try{C.own(state,session);}catch(e){notify(e.message);return;}}
+  lockedInterval = range ? {start:range.start, end:range.end} : null;
+  const locked = Boolean(lockedInterval);
+  $('editTimeFields').hidden = locked;
+  $('editTimeFields').disabled = locked;
+  $('selectedInterval').hidden = !locked;
+  if(locked) {
+    const date = stamp => new Date(stamp).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
+    const endLabel = date(range.start)===date(range.end) ? '' : date(range.end)+' ';
+    $('selectedInterval').textContent = date(range.start)+' · '+clockTime(range.start)+'–'+endLabel+clockTime(range.end)+' · '+C.format((range.end-range.start)/1000);
+  }
   editing = session?.id ?? null;
   editorStart = range?.start ?? session?.start ?? Date.now()-1800000;
   originalLength = (range?.end ?? session?.end ?? Date.now()) - editorStart;
@@ -243,6 +282,7 @@ function openEditor(session, range) {
   $('editor').showModal();
 }
 function editorRange(minutes) {
+  if(lockedInterval) return lockedInterval;
   const date = $('editStart').value;
   const start = new Date(editorStart);
   if (date !== localDate(editorStart).slice(0,10)) {
@@ -258,7 +298,7 @@ for(const id of ['manualMinutes','editDuration']) $(id).addEventListener('blur',
   if(minutes) $(id).value=C.format(minutes*60);
 });
 $('cancelEdit').onclick=()=>$('editor').close();
-$('editForm').onsubmit=e=>{e.preventDefault();const project=projectForName($('editProject').value),workType=workTypes().find(t=>sameName(t,$('editType').value));if(!C.parseMinutes($('editDuration').value)){$('editError').textContent='Enter a duration such as 26, 126 or 1:26.';return;}if(!project){$('editError').textContent='Choose a project or use + to create one.';return;}if(!workType){$('editError').textContent='Choose a work type or use + to create one.';return;}const existing=state.sessions.find(s=>s.id===editing);const session={id:editing||C.id(),userId:existing?.userId||state.userId,projectId:project.id,description:$('editDescription').value.trim(),...editorRange(C.parseMinutes($('editDuration').value)),workType,units:Number($('editUnits').value),continuationOf:existing?.continuationOf};try{C.validate(session,remoteTypes ? {...state,workTypes:[...new Set([...state.workTypes,...remoteTypes])]} : state);}catch(error){$('editError').textContent=error.message;return;}if(mutate(n=>C.upsert(n,session))){$('editor').close();notify('Session saved.');}};
+$('editForm').onsubmit=e=>{e.preventDefault();const project=projectForName($('editProject').value),workType=workTypes().find(t=>sameName(t,$('editType').value));if(!lockedInterval && !C.parseMinutes($('editDuration').value)){$('editError').textContent='Enter a duration such as 26, 126 or 1:26.';return;}if(!project){$('editError').textContent='Choose a project or use + to create one.';return;}if(!workType){$('editError').textContent='Choose a work type or use + to create one.';return;}const existing=state.sessions.find(s=>s.id===editing);const session={id:editing||C.id(),userId:existing?.userId||state.userId,projectId:project.id,description:$('editDescription').value.trim(),...editorRange(C.parseMinutes($('editDuration').value)),workType,units:Number($('editUnits').value),continuationOf:existing?.continuationOf};try{C.validate(session,remoteTypes ? {...state,workTypes:[...new Set([...state.workTypes,...remoteTypes])]} : state);}catch(error){$('editError').textContent=error.message;return;}if(mutate(n=>C.upsert(n,session))){$('editor').close();notify('Session saved.');}};
 $('deleteEdit').onclick=()=>{if(editing&&mutate(n=>C.remove(n,editing))){$('editor').close();notify('Task and tracked intervals deleted.');}};
 let editingProject = null;
 function openProject(project) {
@@ -289,7 +329,61 @@ $('export').onclick=()=>download('task-track-sessions.csv',C.csv([['ID','Project
 window.addEventListener('storage',e=>{if(e.key===KEY){notify('Your data changed in another window. Reload to continue.');readOnly=true;$('toggle').disabled=true;$('saveState').textContent='Reload required';}});
 if(!localStorage.getItem(KEY)&&!readOnly){try{localStorage.setItem(KEY,JSON.stringify(state));}catch{readOnly=true;notify('Your browser could not save your data.');}}
 function dayBounds(){const [y,m,d]=$('dayDate').value.split('-').map(Number);const start=new Date(y,m-1,d),end=new Date(y,m-1,d+1);return [start.getTime(),end.getTime()];}
-function renderDay(){if(!$('dayDate').value)return;const [start,end]=dayBounds(),records=C.daily(state,start,end),timeline=$('timeline');$('dayTotal').textContent=C.format(records.reduce((n,s)=>n+C.dayOverlap(s,start,end)/1000,0));timeline.replaceChildren();for(let h=0;h<24;h++){const cell=el('div',String(h).padStart(2,'0')+':00','hour');cell.style.top=(h/24*100)+'%';timeline.append(cell);}for(const s of records){const block=action((s.description||'No description')+' · '+C.format(C.dayOverlap(s,start,end)/1000),()=>openEditor(s));block.className='timeblock';block.style.top=((Math.max(s.start,start)-start)/(end-start)*100)+'%';block.style.height=Math.max(2,(Math.min(s.end,end)-Math.max(s.start,start))/(end-start)*100)+'%';block.style.borderLeftColor=typeColor(s.workType);timeline.append(block);}if(start<=Date.now()&&Date.now()<end){const line=el('div',null,'nowline');line.style.top=((Date.now()-start)/(end-start)*100)+'%';timeline.append(line);}const first=records[0];const target=first?Math.max(0,Math.min(1260,Math.floor((Math.max(first.start,start)-start)/60000)-90)):Math.max(0,(new Date().getHours()-2)*60);requestAnimationFrame(()=>$('timelineScroll').scrollTop=target);}
+function showReportedSession(session, timestamp) {
+  setDay(new Date(timestamp));
+  showView('day');
+  const target=[...$('timeline').querySelectorAll('.timeblock')].find(el=>el.dataset.sessionId===session.id);
+  if(target) requestAnimationFrame(()=>{
+    target.classList.add('reported');
+    target.focus({preventScroll:true});
+    target.scrollIntoView({block:'center',inline:'nearest'});
+  });
+}
+// Sessions arrive in start order. Each overlapping group shares the available width.
+function placeDayBlocks(records,start,end) {
+  let lanes=[], group=[];
+  const flush=()=>{
+    for(const {block,lane} of group){
+      block.style.left=(lane/lanes.length*100)+'%';
+      block.style.width='calc('+(100/lanes.length)+'% - 2px)';
+    }
+    group=[];lanes=[];
+  };
+  const layer=el('div',null,'dayBlocks');
+  for(const session of records){
+    const top=(Math.max(session.start,start)-start)/60000;
+    const duration=C.dayOverlap(session,start,end)/60000;
+    if(lanes.every(bottom=>bottom<=top)) flush();
+    let lane=lanes.findIndex(bottom=>bottom<=top);
+    if(lane<0) lane=lanes.length;
+    const height=Math.min(Math.max(16,duration),(end-start)/60000-top);
+    lanes[lane]=top+height;
+    const block=action((session.description||'No description')+' · '+C.format(duration*60),()=>openEditor(session));
+    block.className='timeblock';block.dataset.sessionId=session.id;
+    block.style.top=top+'px';block.style.height=height+'px';
+    block.title=block.textContent;block.style.borderLeftColor=typeColor(session.workType);
+    group.push({block,lane});layer.append(block);
+  }
+  flush();return layer;
+}
+function renderDay() {
+  if(!$('dayDate').value) return;
+  const [start,end]=dayBounds(),records=C.daily(state,start,end),timeline=$('timeline');
+  $('dayTotal').textContent=C.format(records.reduce((ms,s)=>ms+C.dayOverlap(s,start,end),0)/1000);
+  timeline.replaceChildren();
+  const dayMinutes=(end-start)/60000;
+  timeline.style.height=dayMinutes+'px';
+  for(let offset=0;offset<dayMinutes;offset+=60) {
+    const cell=el('div',clockTime(start+offset*60000),'hour');
+    cell.style.top=offset+'px'; timeline.append(cell);
+  }
+  timeline.append(placeDayBlocks(records,start,end));
+  if(start<=Date.now()&&Date.now()<end){
+    const line=el('div',null,'nowline'); line.style.top=((Date.now()-start)/60000)+'px';timeline.append(line);
+  }
+  const target=records.length?(Math.max(records[0].start,start)-start)/60000-90:(new Date().getHours()-2)*60;
+  requestAnimationFrame(()=>$('timelineScroll').scrollTop=Math.max(0,target));
+}
 let displayedMonth;
 function setDay(date) {
   $('dayDate').value=localDate(+date).slice(0,10);
@@ -323,11 +417,35 @@ for(const [id,offset] of [['previousMonth',-1],['nextMonth',1]]) $(id).onclick=(
 document.addEventListener('click',event=>{if(!event.target.closest('.dateField')) closeDates();});
 document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!$('datePanel').hidden){closeDates();$('chooseDate').focus();}});
 $('dayDate').onchange=renderDay;$('previousDay').onclick=()=>{const [s]=dayBounds();const d=new Date(s);d.setDate(d.getDate()-1);setDay(d);};$('nextDay').onclick=()=>{const [s]=dayBounds();const d=new Date(s);d.setDate(d.getDate()+1);setDay(d);};$('today').onclick=()=>setDay(new Date());
-function timelineMinute(event){const rect=$('timeline').getBoundingClientRect(); return Math.max(0,Math.min(1440,Math.round(((event.clientY-rect.top)/rect.height*1440)/5)*5));}
-function drawTimelineDraft(){const old=$('timeline').querySelector('.draftblock');if(old)old.remove();if(!timelineDrag)return;const top=Math.min(timelineDrag.start,timelineDrag.end),height=Math.max(5,Math.abs(timelineDrag.end-timelineDrag.start));const block=el('div',top+'–'+(top+height)+' min','draftblock');block.style.top=(top/1440*100)+'%';block.style.height=(height/1440*100)+'%';$('timeline').append(block);}
+function timelineMinute(event){
+  const rect=$('timeline').getBoundingClientRect(), [start,end]=dayBounds();
+  const minutes=(end-start)/60000;
+  return Math.max(0,Math.min(minutes,Math.round((event.clientY-rect.top)/rect.height*minutes/5)*5));
+}
+function clockTime(timestamp) {
+  return new Date(timestamp).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',hour12:false});
+}
+function drawTimelineDraft() {
+  $('timeline').querySelector('.draftblock')?.remove();
+  if(!timelineDrag) return;
+  const [dayStart,dayEnd]=dayBounds(), minutes=(dayEnd-dayStart)/60000;
+  const top=Math.min(timelineDrag.start,timelineDrag.end), bottom=Math.max(timelineDrag.start,timelineDrag.end);
+  const block=el('div',clockTime(dayStart+top*60000)+'–'+clockTime(dayStart+bottom*60000),'draftblock');
+  block.style.top=(top/minutes*100)+'%'; block.style.height=(Math.max(5,bottom-top)/minutes*100)+'%';
+  $('timeline').append(block);
+}
 $('timeline').onpointerdown=e=>{if(e.target.closest('.timeblock'))return;timelineDrag={pointer:e.pointerId,start:timelineMinute(e),end:timelineMinute(e)};$('timeline').setPointerCapture(e.pointerId);drawTimelineDraft();};
 $('timeline').onpointermove=e=>{if(!timelineDrag||timelineDrag.pointer!==e.pointerId)return;timelineDrag.end=timelineMinute(e);drawTimelineDraft();};
-$('timeline').onpointerup=e=>{if(!timelineDrag||timelineDrag.pointer!==e.pointerId)return;const range=timelineDrag;timelineDrag=null;drawTimelineDraft();if(Math.abs(range.end-range.start)<5)return;const [start]=dayBounds(),from=Math.min(range.start,range.end),to=Math.max(range.start,range.end);openEditor(null,{start:start+from*60000,end:start+to*60000});};
+$('timeline').onpointerup=e=>{
+  if(!timelineDrag || timelineDrag.pointer!==e.pointerId) return;
+  const first=timelineDrag.start,last=timelineMinute(e);
+  timelineDrag=null; drawTimelineDraft();
+  if(Math.abs(last-first)<5) return;
+  const [dayStart]=dayBounds();
+  const start=dayStart+Math.min(first,last)*60000,end=dayStart+Math.max(first,last)*60000;
+  if(end>Date.now()){notify('Select an interval that has already ended.');return;}
+  openEditor(null,{start,end});
+};
 $('timeline').onpointercancel=()=>{timelineDrag=null;drawTimelineDraft();};
 function setManualMode(value){manualMode=value;$('manualMode').checked=value;if(value&&!$('manualMinutes').value)$('manualMinutes').value='30';render();}
 $('manualMode').onchange=()=>setManualMode($('manualMode').checked);

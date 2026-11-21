@@ -96,11 +96,25 @@ test('connected type picker reads and extends the catalog', async ({page})=>{
 });
 test('calendar drag proposes a session, and resuming a task keeps one list row per day',async({page})=>{
   await page.getByRole('button',{name:'Calendar',exact:true}).click();
-  await page.locator('#previousDay').click();
+  await page.locator('#previousDay').click(); await page.locator('#previousDay').click();
+  const selectedDay=await page.locator('#dayDate').inputValue();
+  await page.locator('#timelineScroll').evaluate(el=>{el.scrollTop=480;});
   const box=await page.locator('#timelineScroll').boundingBox();
-  await page.mouse.move(box.x+40,box.y+25); await page.mouse.down();
-  await page.mouse.move(box.x+40,box.y+55,{steps:5}); await page.mouse.up();
-  await expect(page.locator('#editor')).toBeVisible(); await expect(page.locator('#editDuration')).toHaveValue('00:30');
+  await page.mouse.move(box.x+40,box.y+55); await page.mouse.down();
+  await page.mouse.move(box.x+40,box.y+25,{steps:5}); await page.mouse.up();
+  await expect(page.locator('#editor')).toBeVisible();
+  await expect(page.locator('#editStart')).toBeHidden();await expect(page.locator('#editDuration')).toBeHidden();
+  await expect(page.locator('#selectedInterval')).toContainText('08:25–08:55 · 00:30');
+  await page.locator('#editDescription').fill('Calendar selection');
+  await page.locator('#editForm .primary').click();
+  await expect(page.locator('#editor')).toBeHidden();
+  const interval=await page.evaluate(()=>{
+    const item=JSON.parse(localStorage.getItem('toggle-task.v1')).sessions.find(s=>s.description==='Calendar selection');
+    return [item.start,item.end].map(ms=>{const d=new Date(ms);return new Date(ms-d.getTimezoneOffset()*60000).toISOString().slice(0,16);});
+  });
+  expect(interval).toEqual([selectedDay+'T08:25',selectedDay+'T08:55']);
+  await page.getByRole('button',{name:'Calendar selection · 00:30'}).click();
+  await expect(page.locator('#editStart')).toBeVisible();
   await page.locator('#cancelEdit').click();
   await page.getByRole('button',{name:'List',exact:true}).click();
   await page.keyboard.press('Control+d'); await page.locator('#description').fill('Resume test');
@@ -133,4 +147,56 @@ test('Reports opens on the calendar day and clips time to the chosen range',asyn
   await page.locator('#moreButton').click();await page.locator('#backToTracking').click();
   await page.locator('#moreButton').click();await page.getByRole('button',{name:'Reports',exact:true}).click();
   await expect(page.locator('#reports h1')).toHaveText('00:15');
+});
+test('brand and project narrow all report metrics within the chosen period',async({page})=>{
+  await page.evaluate(()=>{
+    const key='toggle-task.v1',state=JSON.parse(localStorage.getItem(key));
+    const now=new Date();now.setHours(10,0,0,0);
+    state.projects.push({...state.projects[0],id:'p3',name:'Print campaign'},{id:'privateP',name:'Private project',brand:'Private brand'});
+    const sample=state.sessions[0];
+    state.sessions=[
+      {...sample,start:+now,end:+now+3600000,units:6},
+      {...sample,id:'b',projectId:'demo-p2',start:+now+3600000,end:+now+5400000,units:4},
+      {...sample,id:'c',projectId:'p3',start:+now+5400000,end:+now+6300000,units:3},
+      {...sample,id:'d',projectId:'privateP',userId:'other',start:+now,end:+now+3600000}
+    ];localStorage.setItem(key,JSON.stringify(state));
+  });
+  await page.reload();await page.locator('#moreButton').click();await page.getByRole('button',{name:'Reports',exact:true}).click();
+  await expect(page.locator('#reports h1')).toHaveText('01:45');
+  await expect(page.locator('#reportBrand')).not.toContainText('Private brand');
+  await page.getByRole('combobox',{name:'Brand',exact:true}).selectOption({label:'Fern Studio'});
+  await expect(page.locator('#reports h1')).toHaveText('01:15');
+  await expect(page.locator('#reportProject')).not.toContainText('Collection packaging');
+  await page.getByRole('combobox',{name:'Project',exact:true}).selectOption('p3');
+  await expect(page.locator('#reports h1')).toHaveText('00:15');
+  await expect(page.locator('#reports')).toContainText('3 units');
+  await page.locator('#reportBrand').selectOption({label:'Field Goods'});
+  await expect(page.locator('#reportProject')).toHaveValue('');
+  await expect(page.locator('#reports h1')).toHaveText('00:30');
+  await expect(page.locator('#reports .projectcard')).toHaveCount(1);
+});
+test('overlapping entries save, remain separately clickable and open from Reports', async({page})=>{
+  // Keep all entries on the same known local calendar day.
+  await page.clock.install({time:new Date(2026,4,12,15,30)});
+  await page.keyboard.press('Control+d');
+  for(const [name,duration] of [['Layout','126'],['Review','12']]){
+    await page.locator('#description').fill(name);
+    await page.locator('#manualMinutes').fill(duration);
+    await page.locator('#toggle').click();
+    await expect(page.locator('#sessions')).toContainText(name);
+  }
+  await page.getByRole('button',{name:'Calendar',exact:true}).click();
+  await page.locator('#today').click();
+  const first=page.getByRole('button',{name:'Layout · 01:26'}),second=page.getByRole('button',{name:'Review · 00:12'});
+  const a=await first.boundingBox(),b=await second.boundingBox();
+  expect(a.x+a.width).toBeLessThanOrEqual(b.x+1);
+  await page.locator('#moreButton').click();await page.getByRole('button',{name:'Reports',exact:true}).click();
+  await expect(page.locator('#reports h1')).toHaveText('01:38');
+  await page.getByRole('button',{name:'Show Spring campaign in Calendar'}).click();
+  await expect(second).toBeFocused();await expect(second).toBeInViewport();
+  await page.locator('#moreButton').click();await page.getByRole('button',{name:'Reports',exact:true}).click();
+  await page.locator('.reportCard summary').click();
+  await page.locator('.reportCard details button').filter({hasText:'Layout'}).click();
+  await expect(first).toBeFocused();await expect(first).toHaveClass(/reported/);
+  await first.click();await expect(page.locator('#editDescription')).toHaveValue('Layout');
 });

@@ -7,7 +7,7 @@ Design direction requested by the user: Material 3 Expressive adapted to desktop
 Sources: https://m3.material.io/ and https://design.google/library/expressive-material-design-google-research
 Tonal surfaces, prominent timer action, pill navigation, grouped lists, large readable duration, light/dark themes, palette selection, visible keyboard focus, reduced motion. CSS transitions are an approximation, not Google's spring implementation. No Google logos or proprietary assets.
 
-Local preview acceptance: start/stop with stable ownership; survive reload; add/edit sessions; reject backwards/future/overlapping time for same worker; delete with undo; create/archive projects; totals from historical time plus sessions; quantities grouped by work type; profiles with stable IDs; filtered history; reports; CSV and JSON export; clear Notion disconnected state.
+Local preview acceptance: start/stop with stable ownership; survive reload; add/edit sessions; allow overlapping sessions and sum each duration; reject backwards or future time; delete with undo; create/archive projects; totals from historical time plus sessions; quantities grouped by work type; profiles with stable IDs; filtered history; reports; CSV and JSON export; clear Notion disconnected state.
 
 Production gates still required: real Notion authorization, durable server idempotency/unique keys, authenticated user identity, multi-device conflict strategy, paginated reads, rate-limit retry/backoff, native builds and UI smoke tests, code signing, recovery/backup import, usability study with intended users.
 

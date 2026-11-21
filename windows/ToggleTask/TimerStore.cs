@@ -50,7 +50,6 @@ public sealed class TimerStore : INotifyPropertyChanged, IDisposable {
  public bool Save(TimeSession s){
   if(s.WorkerId!=WorkerId||all.Any(x=>x.Id==s.Id&&x.WorkerId!=WorkerId)){SyncState="This session belongs to another profile.";return false;}
   if(s.EndedAt is not{} end||end<=s.StartedAt||end>DateTime.Now.AddSeconds(1)){SyncState="Check the start and end times. The session must finish by the current time.";return false;}
-  if(Sessions.Any(x=>x.Id!=s.Id&&s.StartedAt<x.EndedAt&&end>x.StartedAt)||(active!=null&&active.Id!=s.Id&&end>active.StartedAt)){SyncState="This session overlaps time already logged.";return false;}
   all.RemoveAll(x=>x.Id==s.Id);all.Add(s with{DurationSeconds=(int)(end-s.StartedAt).TotalSeconds});Refresh();Persist();return true;
  }
  public void SaveManual(){

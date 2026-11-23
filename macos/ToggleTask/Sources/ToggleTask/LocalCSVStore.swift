@@ -88,6 +88,23 @@ final class LocalCSVStore {
         catch let e as NSError where e.domain == NSCocoaErrorDomain && e.code == NSFileReadNoSuchFileError { return nil }
     }
 
+    private func setRecordLock(_ descriptor: Int32, type: Int16) -> Int32 {
+        var record = Darwin.flock()
+        record.l_start = 0
+        record.l_len = 0
+        record.l_pid = 0
+        record.l_type = type
+        record.l_whence = Int16(SEEK_SET)
+
+        var result: Int32 = -1
+        repeat {
+            result = withUnsafeMutablePointer(to: &record) { pointer in
+                Darwin.fcntl(descriptor, F_SETLK, UnsafeMutableRawPointer(pointer))
+            }
+        } while result == -1 && errno == EINTR
+        return result
+    }
+
     private func withExclusiveLock<T>(_ operation: () throws -> T) throws -> T {
         let lockFile = file.appendingPathExtension("lock")
         let descriptor = lockFile.path.withCString { path in
@@ -96,10 +113,11 @@ final class LocalCSVStore {
         guard descriptor >= 0 else { throw LocalCSVStoreError.lockUnavailable(errno) }
         defer { _ = Darwin.close(descriptor) }
 
-        var lockResult: Int32
-        repeat { lockResult = Darwin.flock(descriptor, LOCK_EX | LOCK_NB) } while lockResult != 0 && errno == EINTR
+        // F_SETLK is the nonblocking POSIX record-lock operation. A zero-length
+        // range from SEEK_SET protects the whole sidecar file across processes.
+        let lockResult = setRecordLock(descriptor, type: Int16(F_WRLCK))
         guard lockResult == 0 else { throw LocalCSVStoreError.lockUnavailable(errno) }
-        defer { _ = Darwin.flock(descriptor, LOCK_UN) }
+        defer { _ = setRecordLock(descriptor, type: Int16(F_UNLCK)) }
         return try operation()
     }
 
@@ -132,3 +150,4 @@ final class LocalCSVStore {
         }
     }
 }
+

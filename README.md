@@ -15,7 +15,7 @@ Checks: `node --test prototype/core.test.cjs`; `npm ci --prefix prototype`, then
 
 Native builds/tests run in GitHub Actions. Artifacts: `TaskTrack-macos` and `TaskTrack-windows`. In the native app, enable activity tracking, use another application for at least 15 seconds and return to review a suggestion. Recording is off on launch.
 
-See [reference analysis and current limitations](docs/TOGGL_REFERENCE.md). Notion authentication is not configured; local profiles are not authenticated accounts.
+See the [Task Track + Notion logical architecture](docs/ARCHITECTURE.md) and [reference analysis and current limitations](docs/TOGGL_REFERENCE.md). Notion authentication is not configured; local profiles are not authenticated accounts.
 
 ### Local CSV database
 

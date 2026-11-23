@@ -14,3 +14,32 @@ test('cannot edit, reassign, delete or stop another worker session',()=>{const s
 test('compact duration input uses the final two digits for minutes',()=>{
  for (const [input,result] of [['26',26],['126',86],['0126',86],['1:26',86],['1000',600],['160',null],['0',null],['1:60',null],['-5',null]]) assert.equal(C.parseMinutes(input),result,input);
 });
+const codec = require('../macos/ToggleTask/Sources/ToggleTask/Resources/task-track-csv.js');
+test('CSV restores hierarchy, ownership, exact text, elapsed time and a running timer',()=>{
+  const state=C.seed(now), s=state.sessions[0];
+  s.description='=Review, "packaging"\r\n第二行';
+  s.notion={'Created By':'Integration bot'};
+  state.projects[0].name="'Spring campaign";s.units=3;
+  state.users.push({id:'other',name:'Demo profile'});
+  state.sessions.push({...s,id:'other-session',userId:'other',workType:'Proposals'});
+  C.start(state,{...draft,continuationOf:s.id},now);
+  const text=codec.encode(state),loaded=codec.decode(text);
+  assert.ok(text.startsWith('\uFEFF'));assert.match(text,/"Parent item"/);
+  assert.equal(loaded.sessions[0].description,s.description);
+  assert.equal(loaded.sessions[0].notion['Created By'],'Integration bot');
+  assert.equal(loaded.projects[0].name,"'Spring campaign");
+  assert.equal(loaded.active.continuationOf,s.id);
+  assert.equal(loaded.active.start,now);assert.equal(loaded.sessions[0].end,s.end);
+  assert.deepEqual(C.mine(loaded).map(s=>s.id),['sample']);
+  assert.equal(codec.encode(loaded),text);
+  assert.throws(()=>codec.decode(text.slice(0,-8)));
+  assert.throws(()=>codec.encode({...state,projects:null}));
+});
+test('native codec restores projects and empty, completed and running intervals',()=>{
+  const s={id:'x',projectID:'p',projectName:'Test',workerID:'a',description:'CSV, "roundtrip"',recordedBy:'Alice',source:'timer',startedAt:now,durationSeconds:0};
+  const project={id:'p',name:'Test',area:'Area',status:'Active',client:'Client',historicalMinutes:1,participants:['Alice'],workTypes:['Layout']};
+  const csv=codec.encodeDesktop(JSON.stringify({workerID:'a',projects:[project],sessions:[],active:s}));
+  const restored=JSON.parse(codec.decodeDesktop(csv));
+  assert.equal(restored.active.id,'x');assert.equal(restored.active.workerID,'a');
+  assert.equal(restored.workerID,'a');assert.equal(restored.active.startedAt,now);assert.equal(restored.projects[0].client,'Client');
+});

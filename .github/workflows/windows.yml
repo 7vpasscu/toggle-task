@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
@@ -16,7 +17,7 @@ jobs:
           dotnet-version: 8.x
       - name: Build Windows app
         run: dotnet build windows/ToggleTask/ToggleTask.csproj --configuration Release
-      - name: Test ownership and activity ledger
+      - name: Test ownership, activity ledger and local CSV
         run: dotnet run --project windows/ToggleTask.Tests/ToggleTask.Tests.csproj
       - name: Publish Windows app
         run: dotnet publish windows/ToggleTask/ToggleTask.csproj --configuration Release -r win-x64 --self-contained true -o dist/windows

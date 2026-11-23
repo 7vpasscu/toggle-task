@@ -1,6 +1,6 @@
 import Foundation
 
-enum ProjectStatus: String, Codable, CaseIterable { case pending = "Pending", active = "Active", closed = "Closed" }
+enum ProjectStatus: String, Codable, CaseIterable { case pending = "Pending", active = "Active", closed = "Closed", archived = "Archived" }
 
 struct Project: Identifiable, Codable, Hashable {
     let id: String
@@ -10,6 +10,8 @@ struct Project: Identifiable, Codable, Hashable {
     var status: ProjectStatus
     var historicalMinutes: Int
     var participants: [String]
+    var brand: String? = nil
+    var notion: [String:String]? = nil
     var workTypes: [String]
 }
 
@@ -26,6 +28,11 @@ struct TimeSession: Identifiable, Codable, Hashable {
     // Stable application identity, independent of Notion's integration Created By.
     // Legacy records without an explicit owner remain hidden until mapped.
     var workerID: String? = nil
+
+    var workType: String? = nil
+    var units: Int? = nil
+    var notion: [String:String]? = nil
+    var continuationOf: String? = nil
 
     var dedupeKey: String { id }
 }

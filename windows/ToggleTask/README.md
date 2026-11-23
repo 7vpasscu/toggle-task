@@ -1,5 +1,5 @@
 # Task Track — Windows MVP
 
-Versión Windows paralela del tracker nativo, construida con WPF sobre .NET 8. Incluye temporizador, selector de proyecto, descripción, historial, datos simulados, deduplicación y bandeja del sistema. La autenticación y sincronización con Notion quedan aisladas para la siguiente iteración.
+Native Windows version built with WPF and .NET 8. It includes a timer, project picker, activity description, personal history, simulated projects, stable deduplication IDs, activity suggestions and a system-tray menu. Sessions and an active timer are stored automatically in `%LOCALAPPDATA%\TaskTrack\task-track.csv` when Notion is unavailable.
 
-Ejecutar con `dotnet run --project windows/ToggleTask/ToggleTask.csproj` en Windows con .NET 8 SDK.
+Run `dotnet run --project windows/ToggleTask/ToggleTask.csproj` on Windows with the .NET 8 SDK. Notion authentication and bidirectional synchronization remain behind the sync boundary for the next production iteration.

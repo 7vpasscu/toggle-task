@@ -6,7 +6,8 @@ let package = Package(
     platforms: [.macOS(.v13)],
     products: [.executable(name: "ToggleTask", targets: ["ToggleTask"])],
     targets: [
-        .executableTarget(name: "ToggleTask"),
+        .executableTarget(name: "ToggleTask", resources: [.copy("Resources/task-track-csv.js")]),
         .testTarget(name: "ToggleTaskTests", dependencies: ["ToggleTask"])
-    ]
+    ],
+    swiftLanguageVersions: [.v5]
 )

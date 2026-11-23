@@ -10,7 +10,9 @@ public sealed class TimerStore : INotifyPropertyChanged, IDisposable {
  readonly System.Windows.Threading.DispatcherTimer timer=new(){Interval=TimeSpan.FromSeconds(1)};
  readonly List<TimeSession> all=[];
  readonly string file=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"TaskTrack","sessions.json");
- TimeSession? active; string selected="job-001",description="",status="Local profile · Notion disconnected";int elapsed;bool manual;DateTime day=DateTime.Today;
+ readonly LocalCsvStore csv=new(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"TaskTrack","task-track.csv"));
+ bool locked;
+ TimeSession? active; string selected="job-001",description="",status="Notion disconnected · Local CSV";int elapsed;bool manual;DateTime day=DateTime.Today;
  string durationText="00:30",initialDuration="";DateTime? manualDate=DateTime.Today;DateTime originalStart;TimeSpan originalLength;string? editingId;
  public string WorkerId {get;}="local:"+WindowsIdentity.GetCurrent().User!.Value;
  public AppActivityMonitor Activity {get;}
@@ -38,19 +40,34 @@ public sealed class TimerStore : INotifyPropertyChanged, IDisposable {
  public sealed record Snapshot(List<TimeSession> Sessions,TimeSession? Active);
  public TimerStore(){
   Activity=new(WorkerId);
-  try{if(File.Exists(file)){var saved=JsonSerializer.Deserialize<Snapshot>(File.ReadAllText(file));if(saved!=null){all.AddRange(saved.Sessions);if(saved.Active?.WorkerId==WorkerId)active=saved.Active;}}}
-  catch(Exception e)when(e is IOException or JsonException or UnauthorizedAccessException){SyncState="Could not load your data: "+e.Message;}
+  try{
+   var saved=csv.Read();
+   if(saved!=null){Projects=saved.Projects;all.AddRange(saved.Sessions);active=saved.Active;}
+   else{
+    if(File.Exists(file)){
+     var legacy=JsonSerializer.Deserialize<Snapshot>(File.ReadAllText(file)) ?? throw new InvalidDataException("Invalid legacy data.");
+     all.AddRange(legacy.Sessions.Select(s=>string.IsNullOrWhiteSpace(s.WorkerId)?s with{WorkerId=WorkerId}:s));
+     active=legacy.Active is{} running
+      ? (string.IsNullOrWhiteSpace(running.WorkerId) ? running with{WorkerId=WorkerId} : running)
+      : null;
+    }
+    csv.Write(new(Projects,all,active,WorkerId));
+   }
+   if(active!=null && active.WorkerId!=WorkerId)throw new InvalidDataException("The running timer belongs to another worker.");
+   if(active!=null){selected=active.ProjectId;description=active.Description;}
+  }catch(Exception e){locked=true;active=null;SyncState="Could not open local CSV: "+e.Message;}
   Refresh();timer.Tick+=(_,_)=>{if(active is{} s)ElapsedSeconds=Math.Max(0,(int)(DateTime.Now-s.StartedAt).TotalSeconds);};if(active!=null)timer.Start();
  }
  void Refresh(){Sessions.Clear();foreach(var s in SessionPolicy.Owned(all,WorkerId).OrderByDescending(x=>x.StartedAt))Sessions.Add(s);DaySessions.Clear();DayBlocks.Clear();foreach(var s in Sessions.Where(s=>SessionPolicy.Overlap(s,day,day.AddDays(1))>0)){DaySessions.Add(s);DayBlocks.Add(new(s,Math.Max(0,(s.StartedAt-day).TotalMinutes),Math.Max(12,SessionPolicy.Overlap(s,day,day.AddDays(1))/60)));}Changed(nameof(DayTotal));}
  public void Submit(){if(ManualMode)SaveManual();else ToggleTimer();}
  public void ToggleTimer(){if(IsRunning)StopTimer();else StartTimer();}
- public void StartTimer(){if(IsRunning||SelectedProject is not{} p)return;active=new(Guid.NewGuid().ToString(),p.Id,p.Name,ActivityDescription.Trim(),DateTime.Now,null,0,Environment.UserName,"timer",WorkerId);ElapsedSeconds=0;timer.Start();Changed(nameof(IsRunning));Changed(nameof(TimerButtonText));Persist();}
- public void StopTimer(){if(active is not{} s)return;var end=DateTime.Now;if(end<=s.StartedAt)end=s.StartedAt.AddSeconds(1);if(Save(s with{EndedAt=end,DurationSeconds=Math.Max(1,(int)(end-s.StartedAt).TotalSeconds)})){active=null;timer.Stop();ElapsedSeconds=0;Changed(nameof(IsRunning));Changed(nameof(TimerButtonText));Persist();}}
+ public void StartTimer(){if(IsRunning||SelectedProject is not{} p)return;var started=new TimeSession(Guid.NewGuid().ToString(),p.Id,p.Name,ActivityDescription.Trim(),DateTime.Now,null,0,Environment.UserName,"timer",WorkerId);if(!Commit([..all],started))return;ElapsedSeconds=0;timer.Start();Changed(nameof(IsRunning));Changed(nameof(TimerButtonText));}
+ public void StopTimer(){if(active is not{} s)return;var end=DateTime.Now;if(end<=s.StartedAt)end=s.StartedAt.AddSeconds(1);if(Save(s with{EndedAt=end,DurationSeconds=Math.Max(1,(int)(end-s.StartedAt).TotalSeconds)})){active=null;timer.Stop();ElapsedSeconds=0;Changed(nameof(IsRunning));Changed(nameof(TimerButtonText));}}
  public bool Save(TimeSession s){
   if(s.WorkerId!=WorkerId||all.Any(x=>x.Id==s.Id&&x.WorkerId!=WorkerId)){SyncState="This session belongs to another profile.";return false;}
   if(s.EndedAt is not{} end||end<=s.StartedAt||end>DateTime.Now.AddSeconds(1)){SyncState="Check the start and end times. The session must finish by the current time.";return false;}
-  all.RemoveAll(x=>x.Id==s.Id);all.Add(s with{DurationSeconds=(int)(end-s.StartedAt).TotalSeconds});Refresh();Persist();return true;
+  var next=all.Where(x=>x.Id!=s.Id).ToList();next.Add(s with{DurationSeconds=(int)(end-s.StartedAt).TotalSeconds});
+  return Commit(next,active?.Id==s.Id?null:active);
  }
  public void SaveManual(){
   if(SelectedProject is not{} p || EntryDuration.Minutes(ManualDuration) is not int minutes || ManualDate is not DateTime date){
@@ -70,7 +87,14 @@ public sealed class TimerStore : INotifyPropertyChanged, IDisposable {
  }
  public void Review(AppActivity item){if(item.WorkerId==WorkerId)LoadInterval("activity-"+item.Id,item.AppName,item.Start.ToLocalTime(),item.End.ToLocalTime());}
  public void Edit(TimeSession s){if(s.WorkerId!=WorkerId)return;SelectedProjectId=s.ProjectId;LoadInterval(s.Id,s.Description,s.StartedAt,s.EndedAt??s.StartedAt);}
- void Persist(){try{Directory.CreateDirectory(Path.GetDirectoryName(file)!);var tmp=file+".tmp";File.WriteAllText(tmp,JsonSerializer.Serialize(new Snapshot(all,active)));File.Move(tmp,file,true);SyncState="Saved locally · Notion disconnected";}catch(Exception e)when(e is IOException or UnauthorizedAccessException){SyncState="Could not save: "+e.Message;}}
- public void Dispose(){timer.Stop();Persist();Activity.Dispose();}
+ bool Commit(List<TimeSession> sessions,TimeSession? running){
+  if(locked)return false;
+  try{
+   csv.Write(new(Projects,sessions,running,WorkerId));
+   all.Clear();all.AddRange(sessions);active=running;
+   SyncState="Saved to local CSV";Refresh();return true;
+  }catch(Exception e){locked=true;SyncState="Could not save local CSV: "+e.Message;return false;}
+ }
+ public void Dispose(){timer.Stop();Activity.Dispose();}
  void Changed([CallerMemberName]string? n=null)=>PropertyChanged?.Invoke(this,new(n));
 }

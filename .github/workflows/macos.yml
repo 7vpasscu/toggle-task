@@ -32,15 +32,19 @@ jobs:
         run: swift build -c release
 
       - name: Test
-        run: swift test
+        run: swift test --parallel
 
       - name: Assemble app bundle
         run: |
           APP="$RUNNER_TEMP/Task Track.app"
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
           cp .build/release/ToggleTask "$APP/Contents/MacOS/ToggleTask"
+          cp Sources/ToggleTask/Resources/task-track-csv.js "$APP/Contents/Resources/"
           cp Resources/Info.plist "$APP/Contents/Info.plist"
           chmod +x "$APP/Contents/MacOS/ToggleTask"
+          plutil -lint "$APP/Contents/Info.plist"
+          test -x "$APP/Contents/MacOS/ToggleTask"
+          test -s "$APP/Contents/Resources/task-track-csv.js"
           ditto -c -k --sequesterRsrc --keepParent "$APP" "$RUNNER_TEMP/TaskTrack-macos.zip"
 
       - name: Upload app artifact

@@ -1,7 +1,7 @@
 namespace ToggleTask;
-public enum ProjectStatus { Pending, Active, Closed }
-public sealed record Project(string Id,string Name,string Client,string Area,ProjectStatus Status,int HistoricalMinutes,string[] Participants,string[] WorkTypes);
-public sealed record TimeSession(string Id,string ProjectId,string ProjectName,string Description,DateTime StartedAt,DateTime? EndedAt,int DurationSeconds,string RecordedBy,string Source,string? WorkerId=null) { public string DedupeKey => Id; public string DurationLabel => EntryDuration.Format(DurationSeconds); }
+public enum ProjectStatus { Pending, Active, Closed, Archived }
+public sealed record Project(string Id,string Name,string Client,string Area,ProjectStatus Status,int HistoricalMinutes,string[] Participants,string[] WorkTypes,string? Brand=null,Dictionary<string,string>? Notion=null);
+public sealed record TimeSession(string Id,string ProjectId,string ProjectName,string Description,DateTime StartedAt,DateTime? EndedAt,int DurationSeconds,string RecordedBy,string Source,string? WorkerId=null,string? WorkType=null,int? Units=null,string? ContinuationOf=null,Dictionary<string,string>? Notion=null) { public string DedupeKey => Id; public string DurationLabel => EntryDuration.Format(DurationSeconds); }
 public static class SessionPolicy {
  public static IEnumerable<TimeSession> Owned(IEnumerable<TimeSession> sessions,string? workerId) => string.IsNullOrWhiteSpace(workerId) ? [] : sessions.Where(s=>s.WorkerId==workerId);
  public static double Overlap(TimeSession s,DateTime start,DateTime end) => Math.Max(0,(new[]{s.EndedAt??s.StartedAt,end}.Min()-new[]{s.StartedAt,start}.Max()).TotalSeconds);

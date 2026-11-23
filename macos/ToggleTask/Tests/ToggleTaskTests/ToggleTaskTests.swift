@@ -2,6 +2,97 @@ import XCTest
 @testable import ToggleTask
 
 final class ToggleTaskTests: XCTestCase {
+    func testCSVReopensACompletedSessionAndRunningTimer() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let url = folder.appendingPathComponent("task-track.csv")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let clock = Date(timeIntervalSince1970: 1720000000)
+        let session = TimeSession(id: "s", projectID: "job-001", projectName: "P", description: "Layout, \"print\"\nnext", startedAt: clock, endedAt: clock.addingTimeInterval(60), durationSeconds: 60, recordedBy: "Alice", source: "manual", workerID: "alice", workType: "Layout", units: 2)
+        var running = session; running.endedAt = nil
+        let store = LocalCSVStore(file: url)
+        try store.write(DesktopSnapshot(projects: MockData.projects, sessions: [session], active: nil, workerID: "alice"))
+        let restored = try XCTUnwrap(LocalCSVStore(file: url).read())
+        XCTAssertEqual(restored.sessions.first?.description, session.description)
+        XCTAssertEqual(restored.sessions.first?.workerID, "alice")
+        XCTAssertEqual(restored.sessions.first?.units, 2)
+        try store.write(DesktopSnapshot(projects: MockData.projects, sessions: [], active: running, workerID: "alice"))
+        XCTAssertEqual(try LocalCSVStore(file: url).read()?.active?.id, "s")
+        try Data("broken".utf8).write(to: url)
+        XCTAssertThrowsError(try store.write(restored)) { error in
+            XCTAssertEqual(error as? LocalCSVStoreError, .conflict)
+        }
+        XCTAssertEqual(try String(contentsOf: url), "broken")
+    }
+
+    func testCSVRejectsAStaleWriterWithoutOverwritingNewerData() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let url = folder.appendingPathComponent("task-track.csv")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let first = LocalCSVStore(file: url)
+        let second = LocalCSVStore(file: url)
+        let original = DesktopSnapshot(projects: MockData.projects, sessions: [], active: nil, workerID: "alice")
+        try first.write(original)
+        _ = try first.read()
+        _ = try second.read()
+
+        var newer = original
+        newer.workerID = "newer-writer"
+        try first.write(newer)
+        XCTAssertThrowsError(try second.write(original)) { error in
+            XCTAssertEqual(error as? LocalCSVStoreError, .conflict)
+        }
+        XCTAssertEqual(try LocalCSVStore(file: url).read()?.workerID, "newer-writer")
+        XCTAssertTrue(try String(contentsOf: url).contains("newer-writer"))
+    }
+
+    @MainActor func testLegacyDefaultsMigrateOnceAndAssignTheStableWorker() throws {
+        struct LegacySnapshot: Codable { var sessions: [TimeSession]; var active: TimeSession? }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let url = folder.appendingPathComponent("task-track.csv")
+        let suite = "TaskTrackTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: folder)
+        }
+        let now = Date.now
+        let legacy = TimeSession(id: "legacy", projectID: "job-001", projectName: MockData.projects[0].name, description: "Legacy session", startedAt: now.addingTimeInterval(-120), endedAt: now.addingTimeInterval(-60), durationSeconds: 60, recordedBy: "Local profile", source: "timer")
+        defaults.set(try JSONEncoder().encode(LegacySnapshot(sessions: [legacy], active: nil)), forKey: "task-track.sessions.v1")
+
+        let migrated = TimerStore(workerID: "alice", defaults: defaults, file: url)
+        XCTAssertEqual(migrated.sessions.first?.workerID, "alice")
+        XCTAssertNil(defaults.data(forKey: "task-track.sessions.v1"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+
+        var replacement = legacy
+        replacement.description = "Must not be imported"
+        defaults.set(try JSONEncoder().encode(LegacySnapshot(sessions: [replacement], active: nil)), forKey: "task-track.sessions.v1")
+        let reopened = TimerStore(workerID: "alice", defaults: defaults, file: url)
+        XCTAssertEqual(reopened.sessions.first?.description, "Legacy session")
+    }
+
+    @MainActor func testTimerStoreRecoversAndCompletesARunningTimer() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let url = folder.appendingPathComponent("task-track.csv")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let startedAt = Date.now.addingTimeInterval(-120)
+        let running = TimeSession(id: "running", projectID: "job-001", projectName: MockData.projects[0].name, description: "Recovered timer", startedAt: startedAt, endedAt: nil, durationSeconds: 0, recordedBy: "Local profile", source: "timer", workerID: "alice")
+        try LocalCSVStore(file: url).write(DesktopSnapshot(projects: MockData.projects, sessions: [], active: running, workerID: "alice"))
+
+        let store = TimerStore(workerID: "alice", defaults: nil, file: url)
+        XCTAssertTrue(store.isRunning)
+        XCTAssertEqual(store.active?.id, "running")
+        XCTAssertEqual(store.selectedProjectID, "job-001")
+        XCTAssertEqual(store.activityDescription, "Recovered timer")
+        XCTAssertGreaterThanOrEqual(store.elapsedSeconds, 119)
+        store.stopTimer()
+
+        let persisted = try XCTUnwrap(LocalCSVStore(file: url).read())
+        XCTAssertNil(persisted.active)
+        XCTAssertEqual(persisted.sessions.first?.id, "running")
+        XCTAssertGreaterThanOrEqual(persisted.sessions.first?.durationSeconds ?? 0, 119)
+    }
+
     func testFormatsElapsedTime() {
         XCTAssertEqual(TimerStore.format(seconds: 3723), "01:02")
         for (input, minutes) in [("26",26), ("126",86), ("0126",86), ("1:26",86), ("1000",600)] {

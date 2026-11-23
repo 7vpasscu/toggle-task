@@ -1,7 +1,6 @@
 'use strict';
 const $=id=>document.getElementById(id), C=Tracker, KEY='toggle-task.v1';
 let state, editing=null, undo=null, readOnly=false, manualMode=false, timelineDrag=null;
-try{const raw=localStorage.getItem(KEY);state=raw?JSON.parse(raw):C.seed();if(!Array.isArray(state.sessions)||!Array.isArray(state.projects)||!Array.isArray(state.users))throw Error('Unrecognized file format');migrate();}catch(e){state=C.seed();readOnly=true;setTimeout(()=>notify('Could not read your saved data. Your original data is protected. '+e.message),0);}
 function migrate() {
   // Translate only built-in type labels. User-entered projects and descriptions are data.
   const legacy = new Map([['Visuales','Visuals'], ['Artes finales','Final artwork'], ['Propuestas','Proposals']]);
@@ -12,7 +11,54 @@ function migrate() {
   state.version = 3;
 }
 function notify(message,action){const n=$('notice');n.replaceChildren(document.createTextNode(message));if(action){const b=document.createElement('button');b.textContent='Undo';b.onclick=action;n.append(b);}n.classList.add('show');clearTimeout(notify.timer);notify.timer=setTimeout(()=>n.classList.remove('show'),9000);}
-function mutate(fn){try{if(readOnly)throw Error('Saving is paused to protect your data.');const disk=localStorage.getItem(KEY);if(disk&&JSON.parse(disk).revision!==state.revision)throw Error('Your data changed in another window. Reload to continue.');const next=structuredClone(state);if(remoteTypes) next.workTypes=[...new Set([...next.workTypes,...remoteTypes])];fn(next);next.revision++;localStorage.setItem(KEY,JSON.stringify(next));state=next;render();$('saveState').textContent='Saved locally';return true;}catch(e){$('saveState').textContent='Could not save';notify(e.message);return false;}}
+let tag=null, saving=false;
+async function database(method='GET',stateToWrite){
+  const options={method,cache:'no-store',headers:{'X-Task-Track':'local'}};
+  if(method==='PUT'){
+    options.headers['Content-Type']='application/json';
+    options.body=JSON.stringify({tag,state:stateToWrite});
+  }
+  const response=await fetch('/api/database',options);
+  if(!response.ok){
+    if(response.status===409)readOnly=true;
+    const data=await response.json().catch(()=>({}));
+    throw Error(data.error||'Local CSV unavailable. Reload after checking the local server.');
+  }
+  return response.json();
+}
+async function mutate(fn){
+  if(saving){notify('Saving your previous change. Try again in a moment.');return false;}
+  saving=true;
+  try{
+    if(readOnly)throw Error('Reload before changing the local CSV.');
+    const next=structuredClone(state);
+    if(remoteTypes)next.workTypes=[...new Set([...next.workTypes,...remoteTypes])];
+    fn(next);next.revision++;
+    $('saveState').textContent='Saving…';
+    const saved=await database('PUT',next);
+    tag=saved.tag;state=next;render();
+    $('saveState').textContent='Saved to local CSV';return true;
+  }catch(e){$('saveState').textContent='Could not save';notify(e.message);render();return false;}
+  finally{saving=false;}
+}
+async function openDatabase(){
+  document.querySelector('.layout').inert=true;
+  try{
+    const disk=await database();
+    tag=disk.tag;
+    if(disk.state)state=disk.state;
+    else {
+      const legacy=localStorage.getItem(KEY);
+      state=legacy?JSON.parse(legacy):C.seed();
+      migrate();
+      tag=(await database('PUT',state)).tag;
+    }
+    $('databasePath').textContent=disk.file;
+    render();setDay(new Date());$('saveState').textContent='Saved to local CSV';
+    refreshCatalog();setInterval(tick,500);
+    document.querySelector('.layout').inert=false;
+  }catch(e){readOnly=true;$('saveState').textContent='Local CSV unavailable';notify(e.message);}
+}
 function el(tag,text,cls){const e=document.createElement(tag);if(text!=null)e.textContent=text;if(cls)e.className=cls;return e;}
 function options(select,items,current){select.replaceChildren(...items.map(x=>{const o=document.createElement('option');o.value=x.id;o.textContent=x.name;return o;}));if(items.some(x=>x.id===current))select.value=current;}
 function optionList(list,values){list.replaceChildren(...values.map(value=>{const option=document.createElement('option');option.value=value;return option;}));}
@@ -47,7 +93,7 @@ function renderSessions(){const list=filtered(),target=$('sessions');target.repl
  if(!groups.length){target.append(el('p','No matching sessions for this profile.','empty'));return;}
  for(const [day,items] of groups){const group=el('section',null,'daygroup'),header=el('header'),date=new Date(day+'T12:00:00'),label=day===localDate(Date.now()).slice(0,10)?'Today':date.toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'});header.append(el('strong',label),el('time',C.format(items.reduce((n,item)=>n+item.seconds,0))));group.append(header);
   for(const item of items){const session=item.root,row=el('article',null,'session'),detail=action('',()=>openEditor(session));detail.className='details';const project=state.projects.find(p=>p.id===session.projectId),line=el('p'),dot=el('span',null,'projectdot');dot.style.background=typeColor(session.workType);dot.title=session.workType;line.append(dot,document.createTextNode(projectName(session.projectId)+' · '+(project?.brand || 'Unassigned brand')+' · '+session.workType));detail.append(el('span',session.description||'+ Add description'),line);detail.setAttribute('aria-label', 'Edit '+(session.description||'session'));
-   const resume=action('▶',()=>{if(mutate(next=>{const root=C.rootFor(next,session);C.start(next,{projectId:root.projectId,description:root.description,workType:root.workType,units:root.units,continuationOf:C.logicalID(root)});})){setManualMode(false);notify('Tracking more time on this task.');}});resume.className='resume';resume.setAttribute('aria-label','Resume '+(session.description||'session'));row.append(detail,el('time',C.format(item.seconds)),resume);group.append(row);}target.append(group);}
+   const resume=action('▶',async()=>{if(await mutate(next=>{const root=C.rootFor(next,session);C.start(next,{projectId:root.projectId,description:root.description,workType:root.workType,units:root.units,continuationOf:C.logicalID(root)});})){setManualMode(false);notify('Tracking more time on this task.');}});resume.className='resume';resume.setAttribute('aria-label','Resume '+(session.description||'session'));row.append(detail,el('time',C.format(item.seconds)),resume);group.append(row);}target.append(group);}
 }
 function typeColor(type){const builtin={'Visuals':'#648ec7','Final artwork':'#c98444','Proposals':'#21a58a'};if(Object.hasOwn(builtin,type))return builtin[type];const colors=['#21a58a','#ad78cb','#c99422','#648ec7'];return colors[Array.from(type||'').reduce((hash,c)=>(hash*31+c.codePointAt(0))>>>0,0)%colors.length];}
 function renderProjects() {
@@ -132,14 +178,14 @@ function renderReports() {
   }
   if(!total) area.append(el('p','No time logged during this period.','empty'));
 }
-function toggle(){if((manualMode||!state.active)&&(!workTypes().some(t=>sameName(t,$('workType').value))||!projectForName($('project').value))){notify('Select a project and type, or create one from the dropdown.');return;}if(manualMode){const minutes=C.parseMinutes($('manualMinutes').value);if(!minutes){notify('Enter a duration such as 26, 126 or 1:26.');return;}const end=Date.now(),session={id:C.id(),userId:state.userId,projectId:currentProjectID(),description:$('description').value.trim(),workType:workTypes().find(t=>sameName(t,$('workType').value)),units:Number($('units').value),start:end-minutes*60000,end};if(mutate(n=>C.upsert(n,session)))notify('Manual entry saved.');return;}mutate(n=>{if(n.active)C.stop(n);else C.start(n,{projectId:currentProjectID(),description:$('description').value.trim(),workType:workTypes().find(t=>sameName(t,$('workType').value)),units:Number($('units').value)});});}
-$('timerForm').onsubmit=e=>{e.preventDefault();toggle();};$('miniToggle').onclick=()=>{if(state.active)mutate(n=>C.stop(n));else {setManualMode(false);toggle();}};
+async function toggle(){if((manualMode||!state.active)&&(!workTypes().some(t=>sameName(t,$('workType').value))||!projectForName($('project').value))){notify('Select a project and type, or create one from the dropdown.');return false;}if(manualMode){const minutes=C.parseMinutes($('manualMinutes').value);if(!minutes){notify('Enter a duration such as 26, 126 or 1:26.');return false;}const end=Date.now(),session={id:C.id(),userId:state.userId,projectId:currentProjectID(),description:$('description').value.trim(),workType:workTypes().find(t=>sameName(t,$('workType').value)),units:Number($('units').value),start:end-minutes*60000,end};const saved=await mutate(n=>C.upsert(n,session));if(saved)notify('Manual entry saved.');return saved;}return mutate(n=>{if(n.active)C.stop(n);else C.start(n,{projectId:currentProjectID(),description:$('description').value.trim(),workType:workTypes().find(t=>sameName(t,$('workType').value)),units:Number($('units').value)});});}
+$('timerForm').onsubmit=async e=>{e.preventDefault();await toggle();};$('miniToggle').onclick=async()=>{if(state.active)await mutate(n=>C.stop(n));else {setManualMode(false);await toggle();}};
 $('miniButton').onclick=()=>{$('mini').hidden=!$('mini').hidden;$('miniButton').setAttribute('aria-expanded',String(!$('mini').hidden));};
 document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='d'&&!e.altKey){e.preventDefault();if(!$('editor').open&&!$('projectEditor').open)setManualMode(!manualMode);return;}if(e.key==='Escape'){$('mini').hidden=true;$('miniButton').setAttribute('aria-expanded','false');}if((e.ctrlKey||e.metaKey)&&e.key==='Enter'&&!$('editor').open&&!$('projectEditor').open){e.preventDefault();toggle();}});
 const headings={timer:'Your sessions',day:'Calendar',reports:'Reports',settings:'Settings'};
 function showView(view){const tracking=['timer','day'].includes(view);$('viewSegments').hidden=!tracking;$('backToTracking').hidden=tracking;const b=document.querySelector('.segments [data-view="'+view+'"]') || document.querySelector('[data-view="'+view+'"]');for(const v of Object.keys(headings))$(v+'View').hidden=v!==view;document.querySelectorAll('[data-view]').forEach(x=>{x.classList.toggle('selected',x===b);x.setAttribute('aria-pressed',String(x===b));x.setAttribute('aria-current',x===b?'page':'false');});$('heading').textContent=headings[view];$('trackingHeader').hidden=!['timer','day'].includes(view);$('moreNav').hidden=true;$('moreButton').setAttribute('aria-expanded','false');if(view==='reports'){$('reportPeriod').value='1';renderReports();}if(view==='day')renderDay();}
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>showView(b.dataset.view));$('moreButton').onclick=()=>{$('moreNav').hidden=!$('moreNav').hidden;$('moreButton').setAttribute('aria-expanded',String(!$('moreNav').hidden));};
-$('user').onchange=()=>mutate(n=>{if(n.active)throw Error('Stop the timer before switching profiles.');n.userId=$('user').value;});for(const id of ['search','period'])$(id).addEventListener('input',renderSessions);for(const id of ['reportBrand','reportProject','reportPeriod']) $(id).onchange=renderReports;$('customDays').oninput=renderReports;$('project').onchange=()=>optionList($('descriptionOptions'),descriptionSuggestions(currentProjectID()));
+$('user').onchange=async()=>{await mutate(n=>{if(n.active)throw Error('Stop the timer before switching profiles.');n.userId=$('user').value;});};for(const id of ['search','period'])$(id).addEventListener('input',renderSessions);for(const id of ['reportBrand','reportProject','reportPeriod']) $(id).onchange=renderReports;$('customDays').oninput=renderReports;$('project').onchange=()=>optionList($('descriptionOptions'),descriptionSuggestions(currentProjectID()));
 function localDate(time){const d=new Date(time);return new Date(time-d.getTimezoneOffset()*60000).toISOString().slice(0,16);}
 function setupPicker(id, values, create, kind, changed) {
   const input = $(id), list = $(id + 'List'), arrow = input.parentElement.querySelector('button');
@@ -230,20 +276,20 @@ async function refreshCatalog() {
   } catch(error){catalogLoadFailed=true;$('catalogStatus').textContent='Work type connection unavailable. Reload to retry.';notify(error.message);}
 }
 async function createType(name) {
-  if(catalogLoadFailed) throw Error('Reconnect and reload before creating a work type.');
+  // When Notion is unavailable the local CSV catalog remains writable.
   if(remoteTypes !== null) {
     const response=await fetch('/api/work-types',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
-    if(!response.ok) throw Error('Could not add the work type in Notion. Try again.');
+    if(!response.ok) throw Error('Notion is unavailable. Reload to use the offline catalog.');
     remoteTypes=(await response.json()).options.map(o=>displayType(o.name));
     name=remoteTypes.find(value=>sameName(value,name)) || name;
   }
   let saved;
-  if(!mutate(n=>{saved=C.addWorkType(n,name);})) return;
+  if(!await mutate(n=>{saved=C.addWorkType(n,name);})) return;
   notify(remoteTypes===null?'Work type saved on this device.':'Work type saved in Notion.');
   return saved;
 }
-function createPickerProject(name) {
-  if(!projectForName(name) && !mutate(n=>n.projects.push({id:C.id(),name,client:'',brand:'',historicalMinutes:0,archived:false}))) return;
+async function createPickerProject(name) {
+  if(!projectForName(name) && !await mutate(n=>n.projects.push({id:C.id(),name,client:'',brand:'',historicalMinutes:0,archived:false}))) return;
   return projectForName(name).name;
 }
 function syncEditorChoices() {
@@ -298,8 +344,8 @@ for(const id of ['manualMinutes','editDuration']) $(id).addEventListener('blur',
   if(minutes) $(id).value=C.format(minutes*60);
 });
 $('cancelEdit').onclick=()=>$('editor').close();
-$('editForm').onsubmit=e=>{e.preventDefault();const project=projectForName($('editProject').value),workType=workTypes().find(t=>sameName(t,$('editType').value));if(!lockedInterval && !C.parseMinutes($('editDuration').value)){$('editError').textContent='Enter a duration such as 26, 126 or 1:26.';return;}if(!project){$('editError').textContent='Choose a project or use + to create one.';return;}if(!workType){$('editError').textContent='Choose a work type or use + to create one.';return;}const existing=state.sessions.find(s=>s.id===editing);const session={id:editing||C.id(),userId:existing?.userId||state.userId,projectId:project.id,description:$('editDescription').value.trim(),...editorRange(C.parseMinutes($('editDuration').value)),workType,units:Number($('editUnits').value),continuationOf:existing?.continuationOf};try{C.validate(session,remoteTypes ? {...state,workTypes:[...new Set([...state.workTypes,...remoteTypes])]} : state);}catch(error){$('editError').textContent=error.message;return;}if(mutate(n=>C.upsert(n,session))){$('editor').close();notify('Session saved.');}};
-$('deleteEdit').onclick=()=>{if(editing&&mutate(n=>C.remove(n,editing))){$('editor').close();notify('Task and tracked intervals deleted.');}};
+$('editForm').onsubmit=async e=>{e.preventDefault();const project=projectForName($('editProject').value),workType=workTypes().find(t=>sameName(t,$('editType').value));if(!lockedInterval && !C.parseMinutes($('editDuration').value)){$('editError').textContent='Enter a duration such as 26, 126 or 1:26.';return;}if(!project){$('editError').textContent='Choose a project or use + to create one.';return;}if(!workType){$('editError').textContent='Choose a work type or use + to create one.';return;}const existing=state.sessions.find(s=>s.id===editing);const session={id:editing||C.id(),userId:existing?.userId||state.userId,projectId:project.id,description:$('editDescription').value.trim(),...editorRange(C.parseMinutes($('editDuration').value)),workType,units:Number($('editUnits').value),continuationOf:existing?.continuationOf};try{C.validate(session,remoteTypes ? {...state,workTypes:[...new Set([...state.workTypes,...remoteTypes])]} : state);}catch(error){$('editError').textContent=error.message;return;}if(await mutate(n=>C.upsert(n,session))){$('editor').close();notify('Session saved.');}};
+$('deleteEdit').onclick=async()=>{if(editing&&await mutate(n=>C.remove(n,editing))){$('editor').close();notify('Task and tracked intervals deleted.');}};
 let editingProject = null;
 function openProject(project) {
   editingProject = project?.id;
@@ -311,23 +357,21 @@ function openProject(project) {
 }
 $('newProject').onclick=()=>openProject();
 $('cancelProject').onclick=()=>$('projectEditor').close();
-$('projectForm').onsubmit=event=>{
+$('projectForm').onsubmit=async event=>{
   event.preventDefault();
   const name=normalized($('projectName').value), brand=normalized($('brandName').value);
-  if(mutate(n=>{
+  if(await mutate(n=>{
     if(!name || !brand) throw Error('Enter a project name and brand.');
     if(n.projects.some(p=>p.id!==editingProject && sameName(p.name,name))) throw Error('That project already exists.');
     if(editingProject) Object.assign(n.projects.find(p=>p.id===editingProject),{name,brand});
     else n.projects.push({id:C.id(),name,brand,client:'',historicalMinutes:0,archived:false});
   })) $('projectEditor').close();
 };
-$('profileForm').onsubmit=e=>{e.preventDefault();if(mutate(n=>{if(n.active)throw Error('Stop the timer before switching profiles.');const name=normalized($('profileName').value);if(!name)throw Error('Enter a name.');if(n.users.some(u=>sameName(u.name,name)))throw Error('That profile already exists.');const id=C.id();n.users.push({id,name});n.userId=id;}))$('profileForm').reset();};
+$('profileForm').onsubmit=async e=>{e.preventDefault();if(await mutate(n=>{if(n.active)throw Error('Stop the timer before switching profiles.');const name=normalized($('profileName').value);if(!name)throw Error('Enter a name.');if(n.users.some(u=>sameName(u.name,name)))throw Error('That profile already exists.');const id=C.id();n.users.push({id,name});n.userId=id;}))$('profileForm').reset();};
 for(const id of ['palette','theme'])$(id).onchange=()=>mutate(n=>{n[id]=$(id).value;});
 function download(name,text,type){const url=URL.createObjectURL(new Blob([text],{type})),a=el('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 $('backup').onclick=()=>download('task-track-backup.json',JSON.stringify(C.personalBackup(state),null,2),'application/json');
 $('export').onclick=()=>download('task-track-sessions.csv',C.csv([['ID','Project','Activity','Profile','Start','End','Minutes','Work type','Units'],...filtered().map(s=>[s.id,projectName(s.projectId),s.description,userName(s.userId),new Date(s.start).toISOString(),new Date(s.end).toISOString(),C.minutes(C.seconds(s)),s.workType,s.units])]),'text/csv;charset=utf-8');
-window.addEventListener('storage',e=>{if(e.key===KEY){notify('Your data changed in another window. Reload to continue.');readOnly=true;$('toggle').disabled=true;$('saveState').textContent='Reload required';}});
-if(!localStorage.getItem(KEY)&&!readOnly){try{localStorage.setItem(KEY,JSON.stringify(state));}catch{readOnly=true;notify('Your browser could not save your data.');}}
 function dayBounds(){const [y,m,d]=$('dayDate').value.split('-').map(Number);const start=new Date(y,m-1,d),end=new Date(y,m-1,d+1);return [start.getTime(),end.getTime()];}
 function showReportedSession(session, timestamp) {
   setDay(new Date(timestamp));
@@ -449,4 +493,4 @@ $('timeline').onpointerup=e=>{
 $('timeline').onpointercancel=()=>{timelineDrag=null;drawTimelineDraft();};
 function setManualMode(value){manualMode=value;$('manualMode').checked=value;if(value&&!$('manualMinutes').value)$('manualMinutes').value='30';render();}
 $('manualMode').onchange=()=>setManualMode($('manualMode').checked);
-render();setDay(new Date());refreshCatalog();setInterval(tick,500);
+openDatabase();

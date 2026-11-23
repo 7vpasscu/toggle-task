@@ -1,27 +1,27 @@
 # Task Track — macOS MVP
 
-Base nativa SwiftUI + AppKit para seguimiento de tiempo.
+Native SwiftUI + AppKit time tracker.
 
-## Incluido
+## Included
 
-- Timer iniciar/parar con descripción y selector de proyecto.
-- Historial de sesiones y datos simulados.
-- Status item de la barra de menús con popover.
-- Identificador estable de sesión y propietario independiente de Created By.
-- Lista y calendario personales, modo manual con ⌘D y editor de sesiones.
-- Registro opcional de aplicaciones en primer plano y revisión de sugerencias.
-- Persistencia local del temporizador y las sesiones.
-- Adaptador `TimeTrackingSyncClient` preparado para Notion.
+- Start/stop timer with an activity description and project picker.
+- Personal session history and calendar.
+- Menu bar status item and popover.
+- Stable session and worker IDs independent of Notion `Created By`.
+- Manual mode with ⌘D and a session editor.
+- Optional foreground-app activity suggestions.
+- Automatic local CSV persistence, legacy migration and running-timer recovery.
+- `TimeTrackingSyncClient` boundary prepared for Notion.
 
-## Ejecutar en macOS
+## Run on macOS
 
 ```bash
 cd macos/ToggleTask
 swift run
 ```
 
-Este entorno Windows no puede compilar AppKit; la validación final debe hacerse en Xcode/macOS.
+AppKit requires Xcode/macOS. GitHub Actions builds and tests it on a macOS runner.
 
 ## GitHub Actions
 
-El workflow `.github/workflows/macos.yml` compila el paquete en `macos-latest` para cada push a `main`/`master` y cada pull request. El resultado se consulta en la pestaña **Actions** del repositorio.
+`.github/workflows/macos.yml` builds the package on `macos-latest` for every push to `main`/`master` and every pull request, then uploads a runnable app bundle.

@@ -4,14 +4,24 @@ test.beforeEach(async({page})=>{
  const now=Date.now(),state=C.seed(now);state.users.push({id:'other',name:'Demo profile'});
  state.sessions[0].description='My entry';
  state.sessions.push({...state.sessions[0],id:'secret',userId:'other',description:'Other worker entry'});
- await page.addInitScript(s=>{if(!localStorage.getItem('toggle-task.v1'))localStorage.setItem('toggle-task.v1',JSON.stringify(s));},state);
- await page.goto('/');
+ const file=require('node:path').join(process.env.TASK_TRACK_TEST_DIR,'task-track.csv');
+ const codec=require('../macos/ToggleTask/Sources/ToggleTask/Resources/task-track-csv.js');
+ require('node:fs').writeFileSync(file,codec.encode(state));
+ await page.addInitScript(()=>{
+   window.readTestDatabase=async()=> (await (await fetch('/api/database',{headers:{'X-Task-Track':'local'}})).json());
+   window.writeTestDatabase=async state=>{
+     const {tag}=await window.readTestDatabase();
+     const r=await fetch('/api/database',{method:'PUT',headers:{'X-Task-Track':'local','Content-Type':'application/json'},body:JSON.stringify({tag,state})});
+     if(!r.ok)throw Error('Could not install test fixture');
+   };
+ });
+ await page.goto('/'); await expect(page.locator('#saveState')).toHaveText('Saved to local CSV');
 });
 test('list and calendar isolate accounts, including equal display names',async({page})=>{
  await expect(page.locator('#sessions')).toContainText('My entry');
  await expect(page.locator('#sessions')).not.toContainText('Other worker entry');
  await page.getByRole('button',{name:'Calendar',exact:true}).click();
- const date=await page.evaluate(()=>{const s=JSON.parse(localStorage.getItem('toggle-task.v1')).sessions[0];const d=new Date(s.start);return new Date(d-d.getTimezoneOffset()*60000).toISOString().slice(0,10);});
+ const date=await page.evaluate(async()=>{const s=(await window.readTestDatabase()).state.sessions[0];const d=new Date(s.start);return new Date(d-d.getTimezoneOffset()*60000).toISOString().slice(0,10);});
  await page.locator('#dayDate').evaluate((el,date)=>{el.value=date;el.dispatchEvent(new Event('change'));},date);
  await expect(page.locator('#timeline')).toContainText('My entry');
  await expect(page.locator('#timeline')).not.toContainText('Other worker entry');
@@ -23,12 +33,12 @@ test('list and calendar isolate accounts, including equal display names',async({
 });
 test('Ctrl+D toggles manual mode and preserves a running timer',async({page})=>{
  await page.locator('#description').fill('Running timer');await page.locator('#toggle').click();
- const before=await page.evaluate(()=>JSON.parse(localStorage.getItem('toggle-task.v1')).active.id);
+ const before=await page.evaluate(async()=>(await window.readTestDatabase()).state.active.id);
  await page.keyboard.press('Control+d');await expect(page.locator('#manualDurationWrap')).toBeVisible();
  await page.keyboard.press('Control+d');await expect(page.locator('#manualDurationWrap')).toBeHidden();
  await page.reload();await expect(page.locator('#toggle')).toHaveAttribute('aria-label','Stop timer');
  await page.locator('#toggle').click();
- expect(await page.evaluate(id=>JSON.parse(localStorage.getItem('toggle-task.v1')).sessions.filter(s=>s.id===id).length,before)).toBe(1);
+ expect(await page.evaluate(async id=>(await window.readTestDatabase()).state.sessions.filter(s=>s.id===id).length,before)).toBe(1);
 });
 test('manual entry and duration editor save without duplication',async({page})=>{
  await page.keyboard.press('Control+d');await page.locator('#description').fill('Manual entry'); await page.locator('#manualMinutes').fill('26');
@@ -37,7 +47,7 @@ test('manual entry and duration editor save without duplication',async({page})=>
  await page.locator('#editStart').fill('2020-05-10'); await page.locator('#editDuration').fill('126');await page.locator('#editDuration').press('Tab');
  await page.getByRole('button',{name:'Save session',exact:true}).click();
  await expect(page.locator('#editor')).not.toBeVisible();
- const entries=await page.evaluate(()=>JSON.parse(localStorage.getItem('toggle-task.v1')).sessions.filter(s=>s.description==='Manual entry'));
+ const entries=await page.evaluate(async()=>(await window.readTestDatabase()).state.sessions.filter(s=>s.description==='Manual entry'));
  expect(entries).toHaveLength(1);expect((entries[0].end-entries[0].start)/1000).toBe(5160);
 });
 test('dark/light compact layouts and editor render without horizontal overflow',async({page})=>{
@@ -48,7 +58,7 @@ test('dark/light compact layouts and editor render without horizontal overflow',
  await page.getByRole('button',{name:'List',exact:true}).click();
  await page.screenshot({path:'test-results/task-track-light.png',fullPage:true});
  await page.setViewportSize({width:420,height:850});await page.screenshot({path:'test-results/task-track-compact.png',fullPage:true});
- expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ expect(await page.evaluate(async()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
 test('editable project, type and units share one row and follow keyboard order', async ({page}) => {
   for(const manual of [false,true]){
@@ -108,8 +118,8 @@ test('calendar drag proposes a session, and resuming a task keeps one list row p
   await page.locator('#editDescription').fill('Calendar selection');
   await page.locator('#editForm .primary').click();
   await expect(page.locator('#editor')).toBeHidden();
-  const interval=await page.evaluate(()=>{
-    const item=JSON.parse(localStorage.getItem('toggle-task.v1')).sessions.find(s=>s.description==='Calendar selection');
+  const interval=await page.evaluate(async()=>{
+    const item=(await window.readTestDatabase()).state.sessions.find(s=>s.description==='Calendar selection');
     return [item.start,item.end].map(ms=>{const d=new Date(ms);return new Date(ms-d.getTimezoneOffset()*60000).toISOString().slice(0,16);});
   });
   expect(interval).toEqual([selectedDay+'T08:25',selectedDay+'T08:55']);
@@ -124,13 +134,13 @@ test('calendar drag proposes a session, and resuming a task keeps one list row p
   await expect(page.getByRole('button',{name:'Edit Resume test',exact:true})).toHaveCount(1);
 });
 test('Reports opens on the calendar day and clips time to the chosen range',async({page})=>{
-  const anchor=await page.evaluate(()=>{
-    const state=JSON.parse(localStorage.getItem('toggle-task.v1'));
+  const anchor=await page.evaluate(async()=>{
+    const state=(await window.readTestDatabase()).state;
     const day=new Date();day.setDate(day.getDate()-10);day.setHours(0,0,0,0);
     const start=+day-30*60000,end=+day+15*60000;
     const seed=state.sessions[0];
     state.sessions=[{...seed,start,end},{...seed,id:'hidden',userId:'other',start,end}];
-    localStorage.setItem('toggle-task.v1',JSON.stringify(state));
+    await window.writeTestDatabase(state);
     return day.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
   });
   await page.reload();
@@ -149,8 +159,8 @@ test('Reports opens on the calendar day and clips time to the chosen range',asyn
   await expect(page.locator('#reports h1')).toHaveText('00:15');
 });
 test('brand and project narrow all report metrics within the chosen period',async({page})=>{
-  await page.evaluate(()=>{
-    const key='toggle-task.v1',state=JSON.parse(localStorage.getItem(key));
+  await page.evaluate(async()=>{
+    const state=(await window.readTestDatabase()).state;
     const now=new Date();now.setHours(10,0,0,0);
     state.projects.push({...state.projects[0],id:'p3',name:'Print campaign'},{id:'privateP',name:'Private project',brand:'Private brand'});
     const sample=state.sessions[0];
@@ -159,7 +169,7 @@ test('brand and project narrow all report metrics within the chosen period',asyn
       {...sample,id:'b',projectId:'demo-p2',start:+now+3600000,end:+now+5400000,units:4},
       {...sample,id:'c',projectId:'p3',start:+now+5400000,end:+now+6300000,units:3},
       {...sample,id:'d',projectId:'privateP',userId:'other',start:+now,end:+now+3600000}
-    ];localStorage.setItem(key,JSON.stringify(state));
+    ];await window.writeTestDatabase(state);
   });
   await page.reload();await page.locator('#moreButton').click();await page.getByRole('button',{name:'Reports',exact:true}).click();
   await expect(page.locator('#reports h1')).toHaveText('01:45');
@@ -199,4 +209,29 @@ test('overlapping entries save, remain separately clickable and open from Report
   await page.locator('.reportCard details button').filter({hasText:'Layout'}).click();
   await expect(first).toBeFocused();await expect(first).toHaveClass(/reported/);
   await first.click();await expect(page.locator('#editDescription')).toHaveValue('Layout');
+});
+test('migrates browser history once and reopens the CSV after browser storage is cleared',async({page})=>{
+ const fs=require('node:fs'),path=require('node:path'),file=path.join(process.env.TASK_TRACK_TEST_DIR,'task-track.csv');
+ const legacy=C.seed();legacy.sessions[0].description='Legacy entry';legacy.revision=12;
+ fs.renameSync(file,file+'.before-migration');
+ await page.evaluate(s=>localStorage.setItem('toggle-task.v1',JSON.stringify(s)),legacy);
+ await page.reload();await expect(page.locator('#sessions')).toContainText('Legacy entry');
+ await page.locator('#description').fill('In progress');await page.locator('#toggle').click();
+ await expect(page.locator('#toggle')).toHaveAttribute('aria-label','Stop timer');
+ await page.evaluate(()=>localStorage.clear());await page.reload();
+ await expect(page.locator('#toggle')).toHaveAttribute('aria-label','Stop timer');
+ await page.locator('#toggle').click();await expect(page.locator('#sessions')).toContainText('In progress');
+ await page.reload();await expect(page.locator('#sessions')).toContainText('Legacy entry');
+ const csv=fs.readFileSync(file,'utf8');expect(csv).toContain('"Parent item"');expect(csv).toContain('In progress');
+});
+test('protects externally changed and unreadable local databases',async({page})=>{
+ const fs=require('node:fs'),file=require('node:path').join(process.env.TASK_TRACK_TEST_DIR,'task-track.csv');
+ const original=fs.readFileSync(file,'utf8').replace('My entry','External edit');
+ fs.writeFileSync(file,original);
+ await page.locator('#toggle').click();
+ await expect(page.locator('#notice')).toContainText('CSV changed');
+ expect(fs.readFileSync(file,'utf8')).toBe(original);
+ fs.writeFileSync(file,'broken file');await page.reload();
+ await expect(page.locator('#saveState')).toHaveText('Local CSV unavailable');
+ expect(fs.readFileSync(file,'utf8')).toBe('broken file');
 });

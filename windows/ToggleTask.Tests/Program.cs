@@ -15,4 +15,20 @@ Check(!ledger.Suggestions("bob").Any(),"Do not bridge sleep gaps or worker bound
 Check(ledger.Pending==null,"Inactive stops sampling");
 Check(EntryDuration.Minutes("26")==26 && EntryDuration.Minutes("126")==86 && EntryDuration.Minutes("1:26")==86,"Compact duration");
 Check(EntryDuration.Minutes("160")==null && EntryDuration.Minutes("0")==null,"Invalid duration");
+var folder=Directory.CreateTempSubdirectory("task-track-csv-test-");
+var csvPath=Path.Combine(folder.FullName,"task-track.csv");
+var database=new LocalCsvStore(csvPath);
+var csvEntry=mine with { ProjectId=MockData.Projects[0].Id, EndedAt=now, Description="A, \"quoted\"\nactivity", WorkType="Layout", Units=2 };
+try{
+ database.Write(new(MockData.Projects,[csvEntry],null,"alice"));
+ var reopened=new LocalCsvStore(csvPath).Read()!;
+ Check(reopened.Sessions.Single().WorkerId=="alice" && reopened.Sessions[0].Description==csvEntry.Description,"CSV session round trip");
+ Check(reopened.Sessions[0].Units==2 && reopened.Projects[0].Client==MockData.Projects[0].Client,"CSV project and units");
+ database.Write(new(MockData.Projects,[],csvEntry with {EndedAt=null},"alice"));
+ Check(new LocalCsvStore(csvPath).Read()!.Active?.Id==csvEntry.Id,"CSV running timer");
+ File.WriteAllText(csvPath,"broken");
+ bool protectedFile=false;
+ try {database.Write(reopened);} catch(IOException){protectedFile=true;}
+ Check(protectedFile && File.ReadAllText(csvPath)=="broken","Externally modified CSV protected");
+}finally{folder.Delete(true);}
 Console.WriteLine("All checks passed.");

@@ -7,7 +7,8 @@ const files = new Set(['index.html','style.css','desktop.css','material.css','co
 const source = (process.env.TASK_TRACK_NOTION_SOURCE || '').replaceAll('-','').toLowerCase();
 const token = process.env.TASK_TRACK_NOTION_TOKEN;
 const field = 'Type of Work';
-const port = 4173;
+const port = Number(process.env.TASK_TRACK_PORT || 4173);
+const store=require('./local-database.cjs');
 // Pin writes to the personal proof-of-concept source, even if a different ID is supplied.
 const personalSourceHash = '117075600d8bff213300256469d29985965fe9ec27dc4b703541c195d2a2204b';
 let writes = Promise.resolve();
@@ -59,8 +60,20 @@ async function catalog(req,res) {
   }
   return json(res,200,{connected:true,options:options.map(({name,color})=>({name,color}))});
 }
+async function database(req,res) {
+  const host=req.headers.host;
+  if(!['127.0.0.1:'+port,'localhost:'+port].includes(host) || req.headers['x-task-track']!=='local') return json(res,403,{});
+  if(req.method==='GET') return json(res,200,store.read());
+  if(req.method!=='PUT') return json(res,405,{});
+  if(req.headers.origin!=='http://'+host || req.headers['content-type']!=='application/json') return json(res,403,{});
+  const chunks=[];let bytes=0;
+  for await(const chunk of req){bytes+=chunk.length;if(bytes>32*1024*1024)return json(res,413,{});chunks.push(chunk);}
+  const {state,tag}=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  return json(res,200,store.write(state,tag));
+}
 http.createServer((req,res)=>{
   const pathname=new URL(req.url,'http://localhost').pathname;
+  if(pathname==='/api/database'){database(req,res).catch(e=>json(res,e.status||500,{error:e.status===409?e.message:'Could not read or write the local CSV. Check the file and folder permissions.'}));return;}
   if(pathname==='/api/work-types'){catalog(req,res).catch(()=>json(res,502,{}));return;}
   const file=pathname.slice(1)||'index.html';
   if(!files.has(file)){res.writeHead(404);res.end();return;}
